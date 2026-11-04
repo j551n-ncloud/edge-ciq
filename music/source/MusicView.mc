@@ -227,8 +227,12 @@ class MusicView extends WatchUi.View {
             System.println("queue ok: " + _next);
         } else {
             System.println("queue " + code);
-            // Try again on a later poll.
-            _queueFor = null;
+            // Try again on a later poll, except when the Edge refused the
+            // answer as too large (-402) or out of memory (-403): the queue
+            // is ~35 KB and that won't change for this song.
+            if (code != -402 && code != -403) {
+                _queueFor = null;
+            }
         }
         data = null;
         saveCache();
