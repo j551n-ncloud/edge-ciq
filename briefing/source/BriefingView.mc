@@ -226,13 +226,17 @@ class BriefingView extends WatchUi.View {
             var vy0 = y + 6 + dc.getFontHeight(Graphics.FONT_XTINY);
             Ui.label(dc, Ui.PAD, y + 6, "ROUTE ON THE EDGE");
             dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
+            // Grams in the label, so the two values fit side by side.
+            var right = rate == 0 ? "no gels" : gels + (gels == 1 ? " gel" : " gels");
+            var rw = dc.getTextWidthInPixels(right, Graphics.FONT_SMALL);
             dc.drawText(Ui.PAD, vy0, Graphics.FONT_SMALL,
-                km.format("%.0f") + " km - ~" + (min / 60) + ":" + (min % 60).format("%02d") + " h", Graphics.TEXT_JUSTIFY_LEFT);
+                Ui.fit(dc, km.format("%.0f") + " km - " + (min / 60) + ":" + (min % 60).format("%02d") + " h",
+                    Graphics.FONT_SMALL, w - 2 * Ui.PAD - rw - 10), Graphics.TEXT_JUSTIFY_LEFT);
             dc.setColor(Ui.MUTED, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w - Ui.PAD, y + 6, Graphics.FONT_XTINY, "FUEL", Graphics.TEXT_JUSTIFY_RIGHT);
+            dc.drawText(w - Ui.PAD, y + 6, Graphics.FONT_XTINY, rate == 0 ? "FUEL" : "FUEL " + carbs + " G",
+                Graphics.TEXT_JUSTIFY_RIGHT);
             dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w - Ui.PAD, vy0, Graphics.FONT_SMALL,
-                rate == 0 ? "no gels" : gels + " gels - " + carbs + " g", Graphics.TEXT_JUSTIFY_RIGHT);
+            dc.drawText(w - Ui.PAD, vy0, Graphics.FONT_SMALL, right, Graphics.TEXT_JUSTIFY_RIGHT);
             Ui.hline(dc, y + h - 1, w);
             return y + h;
         }
@@ -250,12 +254,15 @@ class BriefingView extends WatchUi.View {
             if (plan["km"] instanceof Number) {
                 dur += " - " + plan["km"] + " km";
             }
+            var right = plan["gels"] + " gels";
+            var rw = dc.getTextWidthInPixels(right, Graphics.FONT_SMALL);
             dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(Ui.PAD, vy, Graphics.FONT_SMALL, dur, Graphics.TEXT_JUSTIFY_LEFT);
+            dc.drawText(Ui.PAD, vy, Graphics.FONT_SMALL, Ui.fit(dc, dur, Graphics.FONT_SMALL, w - 2 * Ui.PAD - rw - 10),
+                Graphics.TEXT_JUSTIFY_LEFT);
             dc.setColor(Ui.MUTED, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w - Ui.PAD, y + 6, Graphics.FONT_XTINY, "FUEL", Graphics.TEXT_JUSTIFY_RIGHT);
+            dc.drawText(w - Ui.PAD, y + 6, Graphics.FONT_XTINY, "FUEL " + plan["carbs"] + " G", Graphics.TEXT_JUSTIFY_RIGHT);
             dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w - Ui.PAD, vy, Graphics.FONT_SMALL, plan["gels"] + " gels - " + plan["carbs"] + " g", Graphics.TEXT_JUSTIFY_RIGHT);
+            dc.drawText(w - Ui.PAD, vy, Graphics.FONT_SMALL, right, Graphics.TEXT_JUSTIFY_RIGHT);
         } else {
             Ui.label(dc, Ui.PAD, y + 6, "FUEL");
             dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
