@@ -4,10 +4,12 @@ import Toybox.Lang;
 import Toybox.System;
 import Toybox.WatchUi;
 
-// Lists the Bluetooth LE devices the Edge sees, strongest first. Marks Apple
-// devices (manufacturer data with Apple's company id 0x004C) and any that
-// advertise the Apple Media Service. Every new device goes to the log
-// (GARMIN/Apps/LOGS/BLESCAN.TXT) with its raw advertising data.
+// Experiment for iPhone music control over Apple Media Service (Ams.mc).
+// Step 1: lists the Apple devices the Edge sees (manufacturer data with
+// Apple's company id 0x004C), strongest first; every new device goes to the
+// log (GARMIN/Apps/LOGS/BLESCAN.TXT) with its raw advertising data.
+// Step 2: tap one to connect and pair; with AMS found, the button at the
+// bottom sends play/pause to the phone.
 class BleScanView extends WatchUi.View {
     const MAX = 40;
     const AMS = "89D3502B-0F36-433A-8EF4-C502AD55F8DC";
@@ -15,6 +17,10 @@ class BleScanView extends WatchUi.View {
     // [ScanResult, name, rssi, apple, ams, appleType]
     hidden var _devs as Array<Array> = [] as Array<Array>;
     hidden var _state as String = "starting";
+    hidden var _note as String = "Tap an Apple device to connect";
+    // [y, index into _devs] per drawn row, and the play/pause button [y, h].
+    hidden var _rows as Array<Array> = [] as Array<Array>;
+    hidden var _btn as Array<Number>? = null;
 
     function initialize() {
         View.initialize();
@@ -32,6 +38,41 @@ class BleScanView extends WatchUi.View {
         _state = (state == BluetoothLowEnergy.SCAN_STATE_SCANNING ? "scanning" : "off") + " (" + status + ")";
         System.println("scan state " + _state);
         WatchUi.requestUpdate();
+    }
+
+    function note(s as String) as Void {
+        _note = s;
+        System.println("note: " + s);
+        WatchUi.requestUpdate();
+    }
+
+    function tapAt(x as Number, y as Number) as Void {
+        var b = _btn;
+        if (b != null && y >= b[0] && y < b[0] + b[1]) {
+            note(Ams.send(Ams.CMD_TOGGLE));
+            return;
+        }
+        for (var i = 0; i < _rows.size(); i++) {
+            var row = _rows[i];
+            if (y >= (row[0] as Number) && y < (row[0] as Number) + (row[2] as Number)) {
+                connect(row[1] as Number);
+                return;
+            }
+        }
+    }
+
+    hidden function connect(i as Number) as Void {
+        var d = _devs[i];
+        BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
+        Ams.disconnect();
+        System.println("connect #" + i + " connections free: "
+            + BluetoothLowEnergy.getAvailableConnectionCount());
+        try {
+            Ams.device = BluetoothLowEnergy.pairDevice(d[0] as BluetoothLowEnergy.ScanResult);
+            note(Ams.device == null ? "pair refused" : "connecting #" + i + "...");
+        } catch (e) {
+            note("pair failed: " + e.getErrorMessage());
+        }
     }
 
     function seen(r as BluetoothLowEnergy.ScanResult) as Void {
@@ -127,25 +168,52 @@ class BleScanView extends WatchUi.View {
         dc.drawText(pad, 4 + lh, f, _devs.size() + " devices, " + apple + " Apple, " + ams + " AMS", Graphics.TEXT_JUSTIFY_LEFT);
         Ui.hline(dc, 6 + 2 * lh, w);
 
-        // Strongest first.
+        // Apple devices only, strongest first.
         var order = [] as Array<Number>;
         for (var i = 0; i < _devs.size(); i++) {
+            if (_devs[i][3] != true) {
+                continue;
+            }
             var j = 0;
             while (j < order.size() && (_devs[order[j]][2] as Number) >= (_devs[i][2] as Number)) {
                 j++;
             }
             order = order.slice(0, j).addAll([i]).addAll(order.slice(j, null));
         }
+        var rh = dc.getFontHeight(Graphics.FONT_SMALL) + 8;
+        var bh = h / 6;
+        var noteY = h - bh - 2 * lh - 8;
+        _rows = [] as Array<Array>;
         var y = 10 + 2 * lh;
-        for (var k = 0; k < order.size() && y + lh <= h; k++) {
+        for (var k = 0; k < order.size() && y + rh <= noteY; k++) {
             var d = _devs[order[k]];
-            var n = d[1] != null ? d[1] as String : "(no name)";
-            var tag = d[4] == true ? " AMS" : (d[3] == true ? " Apple " + (d[5] as Number).format("%02X") : "");
-            dc.setColor(d[3] == true ? Ui.FUEL : Ui.INK, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(pad, y, f, Ui.fit(dc, n + tag, f, w - 2 * pad - 50), Graphics.TEXT_JUSTIFY_LEFT);
-            dc.setColor(Ui.MUTED, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(w - pad, y, f, d[2] + " dBm", Graphics.TEXT_JUSTIFY_RIGHT);
-            y += lh;
+            var t = d[5] as Number;
+            var kind = t == 0x10 ? "Nearby" : (t == 0x0C ? "Handoff" : (t == 0x09 ? "AirPlay"
+                : (t == 0x12 ? "Find My" : (t == 0x07 ? "AirPods" : "type " + t.format("%02X")))));
+            dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
+            dc.drawRectangle(pad, y, w - 2 * pad, rh - 4);
+            dc.drawText(pad + 6, y + (rh - 4) / 2, Graphics.FONT_SMALL, "#" + order[k] + " " + kind,
+                Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
+            dc.drawText(w - pad - 6, y + (rh - 4) / 2, Graphics.FONT_SMALL, d[2] + " dBm",
+                Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+            _rows.add([y, order[k], rh - 4]);
+            y += rh;
+        }
+
+        // Status of the connect attempt, then the play/pause button once
+        // AMS is there.
+        Ui.hline(dc, noteY - 4, w);
+        dc.setColor(Ui.WARN, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(pad, noteY, f, Ui.fit(dc, _note, f, w - 2 * pad), Graphics.TEXT_JUSTIFY_LEFT);
+        _btn = null;
+        if (Ams.remoteCommand() != null) {
+            var by = h - bh - 6;
+            dc.setColor(Ui.INK, Ui.INK);
+            dc.fillRectangle(pad, by, w - 2 * pad, bh);
+            dc.setColor(Ui.PAPER, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(w / 2, by + bh / 2, Graphics.FONT_MEDIUM, "PLAY / PAUSE",
+                Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            _btn = [by, bh];
         }
     }
 }

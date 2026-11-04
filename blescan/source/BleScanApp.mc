@@ -11,6 +11,26 @@ class BleScanApp extends Application.AppBase {
     function getInitialView() {
         var v = new BleScanView();
         BluetoothLowEnergy.setDelegate(new ScanDelegate(v));
-        return [v];
+        Ams.register();
+        return [v, new ScanInput(v)];
+    }
+
+    function onStop(state) as Void {
+        Ams.disconnect();
+    }
+}
+
+class ScanInput extends WatchUi.BehaviorDelegate {
+    hidden var _view as BleScanView;
+
+    function initialize(view as BleScanView) {
+        BehaviorDelegate.initialize();
+        _view = view;
+    }
+
+    function onTap(evt as WatchUi.ClickEvent) as Boolean {
+        var xy = evt.getCoordinates();
+        _view.tapAt(xy[0], xy[1]);
+        return true;
     }
 }
