@@ -80,10 +80,7 @@ WiFi on the bike; without the phone the brief shows the last saved copy.
   parameter drops the per-track country lists) and keeps only the fields
   it draws. Liked state and up next are asked once per track. Up next comes
   from the playlist (`/playlists/{id}/items`, song ids once to find the
-  position, then the next 3 songs at ~120 bytes each) or album, with
-  shuffle off. After a skip the new up next is already there; it refills
-  when one is left. Background order: position, songs ahead, liked check.
-  A song about to end triggers a read right after it, not at the next poll.
+  position, then ~120 bytes for the next song) or album, with shuffle off.
   Not from `/me/player/queue`: 35-50 KB, and the Edge rejects it (-402).
   With shuffle, radio or self-queued songs up next stays empty. On "next"
   the known next song shows at once; Spotify confirms after 0.5 s (retries

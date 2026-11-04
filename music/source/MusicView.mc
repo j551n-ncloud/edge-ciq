@@ -53,32 +53,27 @@ class MusicView extends WatchUi.View {
     // Liked state per track id, so it's only asked once per song.
     hidden var _likedId as String? = null;
     hidden var _liked as Boolean? = null;
+    // "Title - Artist" of the next track in the queue, asked once per song.
+    hidden var _next as String? = null;
+    // The queue's next track, shown at once on "next" before Spotify confirms:
+    // {title, artist, lenMs, id}.
+    hidden var _nextTrack as Dictionary? = null;
     // Id of the song skipped away from, while waiting for Spotify to switch.
     hidden var _skipFrom as String? = null;
     hidden var _retries as Number = 0;
+    hidden var _queueFor as String? = null;
     // Up next comes from the playlist or album itself (small answers), not
     // from /me/player/queue: that's 35-50 KB and the Edge rejects it (-402).
-    // AHEAD songs after the current one are kept ({title, artist, lenMs,
-    // id}), so after a skip the new up next is already there; refilled in
-    // the background when one is left.
-    const AHEAD = 3;
-    hidden var _ahead as Array<Dictionary> = [] as Array<Dictionary>;
-    // Song id and context uri _ahead follows.
-    hidden var _aheadFor as String? = null;
-    hidden var _aheadCtx as String? = null;
-    // Position of the current song in the playlist, -1 unknown; the song
-    // list is fetched in pages of PL_PAGE ids, only to find it.
+    // Position of the current song in the playlist _plUri, -1 unknown; the
+    // song list is fetched in pages of PL_PAGE ids, only to find it.
     const PL_PAGE = 100;
     const PL_MAX_PAGES = 10;
+    hidden var _plUri as String? = null;
     hidden var _plIndex as Number = -1;
     hidden var _plPage as Number = 0;
-    // Background work, one at a time on _bg, in this order: find the
-    // position, fetch more songs ahead, the liked check.
-    hidden var _needLookup as Boolean = false;
-    hidden var _needMore as Boolean = false;
-    hidden var _likedPending as Boolean = false;
-    // A song about to end by itself: ask right after, not at the next poll.
-    hidden var _endTimer as Timer.Timer = new Timer.Timer();
+    // Id of the song at _plIndex + 1 (what up next showed); survives the
+    // optimistic "next", so a skip within the playlist needs no id lookup.
+    hidden var _expectId as String? = null;
     // [x, y, w, h, cmd] per button, rebuilt on every draw.
     hidden var _buttons as Array<Array> = [] as Array<Array>;
 
@@ -86,19 +81,18 @@ class MusicView extends WatchUi.View {
         View.initialize();
         // Last known state, shown at once while the first answer is on its way.
         var c = Application.Storage.getValue("music");
-        if (c instanceof Array && c.size() == 7) {
+        if (c instanceof Array && c.size() == 4) {
             _now = c[0] instanceof Dictionary ? c[0] as Dictionary : null;
             _likedId = c[1] instanceof String ? c[1] as String : null;
+            // Up next only counts as loaded when it was saved too.
+            _queueFor = c[3] instanceof String ? _likedId : null;
             _liked = c[2] instanceof Boolean ? c[2] as Boolean : null;
-            _ahead = c[3] instanceof Array ? c[3] as Array<Dictionary> : [] as Array<Dictionary>;
-            _aheadFor = c[4] instanceof String ? c[4] as String : null;
-            _aheadCtx = c[5] instanceof String ? c[5] as String : null;
-            _plIndex = c[6] instanceof Number ? c[6] as Number : -1;
+            _next = c[3] instanceof String ? c[3] as String : null;
         }
     }
 
     hidden function saveCache() as Void {
-        Application.Storage.setValue("music", [_now, _likedId, _liked, _ahead, _aheadFor, _aheadCtx, _plIndex]);
+        Application.Storage.setValue("music", [_now, _likedId, _liked, _next]);
     }
 
     function onShow() as Void {
@@ -109,7 +103,6 @@ class MusicView extends WatchUi.View {
     function onHide() as Void {
         _poll.stop();
         _settle.stop();
-        _endTimer.stop();
     }
 
     // --- Spotify -------------------------------------------------------------
@@ -142,19 +135,20 @@ class MusicView extends WatchUi.View {
             data = null;
             _status = null;
             var id = (_now as Dictionary)["id"];
-            if (id instanceof String && !id.equals(_likedId)) {
-                newSong(id);
-            } else if (id instanceof String && !id.equals(_aheadFor) && !_needLookup) {
-                // Same song, up next not for it (widget reopened): look up.
-                _needLookup = true;
-                bgNext();
+            if (id instanceof String && !id.equals(_likedId) && !_bgBusy) {
+                // New song: liked state, then up next, on the second line.
+                _likedId = id;
+                _liked = null;
+                _next = null;
+                _nextTrack = null;
+                _bgBusy = true;
+                _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
+                    "/me/library/contains?uris=spotify%3Atrack%3A" + id, null, method(:onLiked));
             }
-            // About to end by itself: ask right after it does.
-            var n = _now as Dictionary;
-            var left = (n["lenMs"] as Number) - (n["posMs"] as Number);
-            _endTimer.stop();
-            if (n["playing"] == true && left > 0 && left < POLL_MS) {
-                _endTimer.start(method(:refresh), left + 400, false);
+            // Same song but no up next yet (widget reopened, or the queue
+            // didn't arrive): fetch it now.
+            if (_next == null) {
+                loadQueue();
             }
             if (was == null || was["playing"] != (_now as Dictionary)["playing"]) {
                 saveCache();
@@ -201,59 +195,6 @@ class MusicView extends WatchUi.View {
         };
     }
 
-    // A different song is playing: up next from what's already ahead (no
-    // request), then the liked check, in the background.
-    hidden function newSong(id as String) as Void {
-        _likedId = id;
-        _liked = null;
-        _likedPending = true;
-        var now = _now;
-        var ctx = now != null ? now["ctx"] : null;
-        var k = -1;
-        if (ctx instanceof String && ctx.equals(_aheadCtx)) {
-            for (var i = 0; i < _ahead.size(); i++) {
-                if (id.equals(_ahead[i]["id"])) {
-                    k = i;
-                    break;
-                }
-            }
-        }
-        if (k >= 0) {
-            // Skipped or played on to a song we had ahead.
-            _ahead = _ahead.slice(k + 1, null);
-            if (_plIndex >= 0) {
-                _plIndex += k + 1;
-            }
-            _aheadFor = id;
-            _needLookup = false;
-            _needMore = _ahead.size() < 2;
-        } else {
-            _ahead = [] as Array<Dictionary>;
-            _aheadFor = null;
-            _needLookup = true;
-            _needMore = false;
-        }
-        saveCache();
-        bgNext();
-    }
-
-    // Next piece of background work, if the second connection is free.
-    hidden function bgNext() as Void {
-        if (_bgBusy) {
-            return;
-        }
-        if (_needLookup) {
-            startLookup();
-        } else if (_needMore) {
-            fetchAhead(true);
-        } else if (_likedPending && _likedId != null) {
-            _likedPending = false;
-            _bgBusy = true;
-            _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
-                "/me/library/contains?uris=spotify%3Atrack%3A" + _likedId, null, method(:onLiked));
-        }
-    }
-
     // /me/library/contains answers a JSON array: [true] or [false].
     function onLiked(code as Number, data) as Void {
         _bgBusy = false;
@@ -262,45 +203,54 @@ class MusicView extends WatchUi.View {
         } else {
             System.println("liked check " + code + ": " + data);
         }
+        // Then the next track, once per song (the queue answer is large).
+        loadQueue();
         saveCache();
         WatchUi.requestUpdate();
-        bgNext();
     }
 
-    // Where the current song sits, then the songs after it.
-    hidden function startLookup() as Void {
-        _needLookup = false;
-        var now = _now;
+    // Up next for the current song, unless it's loaded or something else
+    // is out on the second connection.
+    hidden function loadQueue() as Void {
         var id = _likedId;
-        var ctx = now != null ? now["ctx"] : null;
-        _ahead = [] as Array<Dictionary>;
-        _aheadFor = id;
-        _aheadCtx = ctx instanceof String ? ctx : null;
-        _plIndex = -1;
-        // Shuffle (or radio, no context): only the full queue knows.
-        if (now == null || id == null || now["shuffle"] == true || !(ctx instanceof String)) {
-            doneAhead();
+        var now = _now;
+        if (id == null || id.equals(_queueFor) || _bgBusy || now == null) {
             return;
         }
-        var kind = ctxKind();
+        _queueFor = id;
+        var ctx = now["ctx"];
+        // Shuffle (or radio, no context): only the full queue knows.
+        if (now["shuffle"] == true || !(ctx instanceof String)) {
+            setNext(null);
+            return;
+        }
+        var parts = split(ctx, ":");
+        var kind = parts.size() >= 3 ? parts[parts.size() - 2] : "";
+        var cid = parts[parts.size() - 1];
         if (kind.equals("album")) {
-            fetchAhead(false);
+            var no = now["trackNo"] instanceof Number ? now["trackNo"] as Number : 0;
+            _bgBusy = true;
+            _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
+                "/albums/" + cid + "/tracks?limit=1&offset=" + no + "&market=from_token", null, method(:onNextItem));
         } else if (kind.equals("playlist")) {
-            _plPage = 0;
-            fetchPlaylistIds();
+            // Skipped (or played on) to the song we showed as next: one on.
+            if (ctx.equals(_plUri) && _plIndex >= 0 && id.equals(_expectId)) {
+                _plIndex += 1;
+                fetchPlaylistNext();
+            } else {
+                _plUri = ctx;
+                _plIndex = -1;
+                _plPage = 0;
+                fetchPlaylistIds();
+            }
         } else {
-            doneAhead();
+            setNext(null);
         }
     }
 
-    hidden function ctxKind() as String {
-        var parts = split(_aheadCtx as String, ":");
-        return parts.size() >= 3 ? parts[parts.size() - 2] : "";
-    }
-
-    hidden function ctxId() as String {
-        var parts = split(_aheadCtx as String, ":");
-        return parts[parts.size() - 1];
+    hidden function playlistPath() as String {
+        var parts = split(_plUri as String, ":");
+        return "/playlists/" + parts[parts.size() - 1] + "/items";
     }
 
     // One page of the playlist's song ids (~4 KB per 100), to find the
@@ -308,7 +258,7 @@ class MusicView extends WatchUi.View {
     hidden function fetchPlaylistIds() as Void {
         _bgBusy = true;
         _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
-            "/playlists/" + ctxId() + "/items?fields=items(item(id))&limit=" + PL_PAGE + "&offset=" + (_plPage * PL_PAGE),
+            playlistPath() + "?fields=items(item(id))&limit=" + PL_PAGE + "&offset=" + (_plPage * PL_PAGE),
             null, method(:onPlaylistIds));
     }
 
@@ -319,16 +269,16 @@ class MusicView extends WatchUi.View {
         data = null;
         if (items == null) {
             System.println("playlist ids " + code);
-            doneAhead();
+            setNext(null);
             return;
         }
-        var id = _aheadFor;
+        var id = _likedId;
         for (var i = 0; i < items.size(); i++) {
             var it = items[i];
             if (it instanceof Dictionary && it["item"] instanceof Dictionary
                     && id != null && id.equals((it["item"] as Dictionary)["id"])) {
                 _plIndex = _plPage * PL_PAGE + i;
-                fetchAhead(false);
+                fetchPlaylistNext();
                 return;
             }
         }
@@ -338,83 +288,57 @@ class MusicView extends WatchUi.View {
             return;
         }
         // Not in the playlist (e.g. a song you queued yourself).
-        doneAhead();
+        setNext(null);
     }
 
-    // The next AHEAD songs after the ones already known: name, id, length,
-    // artist names (~120 bytes each).
-    hidden function fetchAhead(append as Boolean) as Void {
-        _needMore = false;
-        if (_aheadCtx == null) {
-            doneAhead();
-            return;
-        }
-        var path;
-        if (ctxKind().equals("album")) {
-            var no = (_now != null && (_now as Dictionary)["trackNo"] instanceof Number)
-                ? (_now as Dictionary)["trackNo"] as Number : 0;
-            path = "/albums/" + ctxId() + "/tracks?limit=" + AHEAD + "&offset=" + (no + _ahead.size()) + "&market=from_token";
-        } else if (_plIndex >= 0) {
-            path = "/playlists/" + ctxId() + "/items?fields=items(item(name,id,duration_ms,artists(name)))&limit="
-                + AHEAD + "&offset=" + (_plIndex + 1 + _ahead.size());
-        } else {
-            doneAhead();
-            return;
-        }
+    // Just the next song: name, id, length, artist names (~120 bytes).
+    hidden function fetchPlaylistNext() as Void {
         _bgBusy = true;
-        _bg.call(Communications.HTTP_REQUEST_METHOD_GET, path, null, method(:onAhead));
+        _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
+            playlistPath() + "?fields=items(item(name,id,duration_ms,artists(name)))&limit=1&offset=" + (_plIndex + 1),
+            null, method(:onNextItem));
     }
 
     // Playlist answer {items: [{item: track}]}, album answer {items: [track]}.
-    function onAhead(code as Number, data as Dictionary or String or Null) as Void {
+    function onNextItem(code as Number, data as Dictionary or String or Null) as Void {
         _bgBusy = false;
-        if (code == 200 && data instanceof Dictionary && data["items"] instanceof Array) {
-            var items = data["items"] as Array;
-            for (var i = 0; i < items.size(); i++) {
-                var t = items[i];
-                if (t instanceof Dictionary && t["item"] instanceof Dictionary) {
-                    t = t["item"] as Dictionary;
-                }
-                if (t instanceof Dictionary) {
-                    _ahead.add(track(t));
-                }
+        var t = null;
+        if (code == 200 && data instanceof Dictionary && data["items"] instanceof Array
+                && (data["items"] as Array).size() > 0 && (data["items"] as Array)[0] instanceof Dictionary) {
+            t = (data["items"] as Array)[0] as Dictionary;
+            if (t["item"] instanceof Dictionary) {
+                t = t["item"] as Dictionary;
             }
-            System.println("ahead ok: " + _ahead.size());
-        } else {
-            System.println("ahead " + code);
+        } else if (code != 200) {
+            System.println("next song " + code);
         }
         data = null;
-        doneAhead();
+        setNext(t);
     }
 
-    hidden function track(t as Dictionary) as Dictionary {
-        var artist = "";
-        if (t["artists"] instanceof Array && (t["artists"] as Array).size() > 0
-                && (t["artists"] as Array)[0] instanceof Dictionary) {
-            var a = ((t["artists"] as Array)[0] as Dictionary)["name"];
-            artist = a instanceof String ? a : "";
+    hidden function setNext(t as Dictionary?) as Void {
+        _next = null;
+        _nextTrack = null;
+        if (t != null) {
+            var name = t["name"] instanceof String ? t["name"] as String : "";
+            var artist = "";
+            if (t["artists"] instanceof Array && (t["artists"] as Array).size() > 0
+                    && (t["artists"] as Array)[0] instanceof Dictionary) {
+                var a = ((t["artists"] as Array)[0] as Dictionary)["name"];
+                artist = a instanceof String ? a : "";
+            }
+            _next = name + (artist.length() > 0 ? " - " + artist : "");
+            _nextTrack = {
+                "title" => name,
+                "artist" => artist,
+                "lenMs" => t["duration_ms"] instanceof Number ? t["duration_ms"] : 0,
+                "id" => t["id"]
+            };
+            _expectId = t["id"] instanceof String ? t["id"] as String : null;
+            System.println("next ok: " + _next);
         }
-        return {
-            "title" => t["name"] instanceof String ? t["name"] : "",
-            "artist" => artist,
-            "lenMs" => t["duration_ms"] instanceof Number ? t["duration_ms"] : 0,
-            "id" => t["id"]
-        };
-    }
-
-    hidden function doneAhead() as Void {
         saveCache();
         WatchUi.requestUpdate();
-        bgNext();
-    }
-
-    // The song after the current one, when known.
-    hidden function nextTrack() as Dictionary? {
-        var now = _now;
-        if (now == null || _ahead.size() == 0 || _aheadFor == null || !_aheadFor.equals(now["id"])) {
-            return null;
-        }
-        return _ahead[0];
     }
 
     hidden function split(s as String, sep as String) as Array<String> {
@@ -446,14 +370,10 @@ class MusicView extends WatchUi.View {
             path = "/me/player/" + cmd;
             _skipFrom = id instanceof String ? id : null;
             _retries = 0;
-            // Next: show the song ahead right away, and its up next too;
-            // Spotify confirms after.
-            var nt = nextTrack();
+            // Next: show the queued song right away; Spotify confirms after.
+            var nt = _nextTrack;
             if (cmd.equals("next") && nt != null && now != null) {
                 _now = {
-                    "ctx" => now["ctx"],
-                    "shuffle" => now["shuffle"],
-                    "trackNo" => (now["trackNo"] as Number) + 1,
                     "active" => true,
                     "playing" => true,
                     "title" => nt["title"],
@@ -463,7 +383,9 @@ class MusicView extends WatchUi.View {
                     "device" => now["device"],
                     "id" => nt["id"]
                 };
-                newSong(nt["id"] as String);
+                _liked = null;
+                _next = null;
+                _nextTrack = null;
             }
         } else if (cmd.equals("like") || cmd.equals("unlike")) {
             if (!(id instanceof String)) {
@@ -638,9 +560,7 @@ class MusicView extends WatchUi.View {
         // Up next, in the space below
         y += hR;
         Ui.hline(dc, y, w);
-        var nt = nextTrack();
-        var nx = nt == null ? null
-            : (nt["title"] as String) + ((nt["artist"] as String).length() > 0 ? " - " + nt["artist"] : "");
+        var nx = _next;
         if (active && nx != null) {
             var fh = dc.getFontHeight(Graphics.FONT_XTINY) + 2 + dc.getFontHeight(Graphics.FONT_SMALL);
             var ny = y + (h - y - fh) / 2;
