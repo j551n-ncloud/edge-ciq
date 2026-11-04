@@ -72,7 +72,8 @@ class MusicView extends WatchUi.View {
         if (c instanceof Array && c.size() == 4) {
             _now = c[0] instanceof Dictionary ? c[0] as Dictionary : null;
             _likedId = c[1] instanceof String ? c[1] as String : null;
-            _queueFor = _likedId;
+            // Up next only counts as loaded when it was saved too.
+            _queueFor = c[3] instanceof String ? _likedId : null;
             _liked = c[2] instanceof Boolean ? c[2] as Boolean : null;
             _next = c[3] instanceof String ? c[3] as String : null;
         }
@@ -132,6 +133,11 @@ class MusicView extends WatchUi.View {
                 _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
                     "/me/library/contains?uris=spotify%3Atrack%3A" + id, null, method(:onLiked));
             }
+            // Same song but no up next yet (widget reopened, or the queue
+            // didn't arrive): fetch it now.
+            if (_next == null) {
+                loadQueue();
+            }
             if (was == null || was["playing"] != (_now as Dictionary)["playing"]) {
                 saveCache();
             }
@@ -181,14 +187,20 @@ class MusicView extends WatchUi.View {
             System.println("liked check " + code + ": " + data);
         }
         // Then the next track, once per song (the queue answer is large).
+        loadQueue();
+        saveCache();
+        WatchUi.requestUpdate();
+    }
+
+    // Up next for the current song, unless it's loaded or something else
+    // is out on the second connection.
+    hidden function loadQueue() as Void {
         var id = _likedId;
-        if (id != null && !id.equals(_queueFor)) {
+        if (id != null && !id.equals(_queueFor) && !_bgBusy) {
             _queueFor = id;
             _bgBusy = true;
             _bg.call(Communications.HTTP_REQUEST_METHOD_GET, "/me/player/queue", null, method(:onQueue));
         }
-        saveCache();
-        WatchUi.requestUpdate();
     }
 
     function onQueue(code as Number, data as Dictionary or String or Null) as Void {
@@ -212,8 +224,11 @@ class MusicView extends WatchUi.View {
                 "lenMs" => t["duration_ms"] instanceof Number ? t["duration_ms"] : 0,
                 "id" => t["id"]
             };
+            System.println("queue ok: " + _next);
         } else {
             System.println("queue " + code);
+            // Try again on a later poll.
+            _queueFor = null;
         }
         data = null;
         saveCache();
