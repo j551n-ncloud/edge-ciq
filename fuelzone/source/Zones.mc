@@ -8,31 +8,29 @@ module ZoneStyle {
 }
 
 // Heart-rate zones as four upper bounds (Z1..Z4); anything at or above the
-// last one is Z5. Same shape as the Strava custom zones (127/158/174/189).
+// last one is Z5. From the device's cycling HR zones unless the hrZones
+// setting overrides them. None known: no zone shown.
 class Zones {
-    var limits as Array<Number> = [127, 158, 174, 189];
+    var limits as Array<Number>? = null;
 
     function initialize() {
     }
 
-    // csv like "127,158,174,189"; empty or invalid falls back to the
-    // device's cycling HR zones.
+    // csv like "120,150,165,180"; empty or invalid uses the device's
+    // cycling HR zones.
     function load(csv as String) as Void {
         var parsed = parseCsv(csv);
-        if (parsed.size() == 4) {
-            limits = parsed;
-            return;
-        }
-        var fromProfile = profileLimits();
-        if (fromProfile != null) {
-            limits = fromProfile;
-        }
+        limits = parsed.size() == 4 ? parsed : profileLimits();
     }
 
-    // 1..5
+    // 1..5, 0 when no zones are known.
     function zoneFor(hr as Number) as Number {
+        var l = limits;
+        if (l == null) {
+            return 0;
+        }
         for (var i = 0; i < 4; i++) {
-            if (hr < limits[i]) {
+            if (hr < l[i]) {
                 return i + 1;
             }
         }
@@ -40,13 +38,17 @@ class Zones {
     }
 
     function rangeText(zone as Number) as String {
+        var l = limits;
+        if (l == null) {
+            return "";
+        }
         if (zone <= 1) {
-            return "<" + limits[0];
+            return "<" + l[0];
         }
         if (zone >= 5) {
-            return limits[3] + "+";
+            return l[3] + "+";
         }
-        return limits[zone - 2] + "-" + limits[zone - 1];
+        return l[zone - 2] + "-" + l[zone - 1];
     }
 
     hidden function profileLimits() as Array<Number>? {

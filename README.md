@@ -9,31 +9,40 @@ _Renders of the design canvas (282 x 470, the Edge 1030 Plus screen), with sampl
 
 | App | Type | Status |
 |---|---|---|
-| `fuelzone/` | data field, full screen | ride screen, gel alert, bell; on the Edge |
+| `fuelzone/` | data field, full screen | ride screen, gel alert; on the Edge. Also an Edge 840 build, see below |
 | `briefing/` | widget "Ride Brief" | on the Edge (enable it in the widget loop) |
 | `music/` | widget "Music" | on the Edge (enable it in the widget loop) |
-| `shared/` | code | `bell/` for the ride screen, `widget/` (proxy calls, drawing) for the widgets |
+| `shared/` | code | `widget/` (proxy calls, drawing) for the widgets |
 
 ## fuelzone
 
 One full-screen data field (put it on a 1-field data page):
 
-- **Heart rate** with zone pill and 5-part zone bar. Zones come from the
-  `hrZones` setting (default: the Strava zones 127/158/174/189), empty falls
-  back to the device's cycling HR zones.
+- **Heart rate** with zone pill and 5-part zone bar. Zones are the device's
+  cycling HR zones (set in Garmin Connect). The `hrZones` setting can
+  override them with four upper limits, e.g. `120,150,165,180`. No zones
+  known: no pill.
 - **Ascent (or 3 s power), speed, cadence, ride time.** The first slot shows
   total ascent until a power meter sends data, then switches to 3 s power.
-- **Fuel:** countdown to the next gel, carbs eaten vs target so far, dots per
-  gel. One gel every `gelIntervalMin` (25) of timer time, counted from the
-  last gel. No alerts when `plannedMinutes` is set and under 60.
+- **Fuel:** countdown to the next gel, carbs eaten and the current rate
+  (g/h), dots per gel. Carbs build up as a need on timer time; a gel
+  (`gelGrams`, 30) is due once the need since the last one reaches it. The
+  rate is the higher of the ride-length rate and the HR-zone rate, capped
+  at `maxCarbsPerHour` (90):
+  - With a route: expected length = ride time + distance left at the
+    average speed (past rides' average in the first 10 min). Under 1 h no
+    gels, 1-2 h 30 g/h, 2 h+ 60 g/h (Jeukendrup 2014; 90 only through the
+    zones, for hard riding). The first gel comes when the first 30 g are
+    needed (30 min at 60 g/h). `plannedMinutes` counts like a route.
+  - Without a route: first gel after `noRouteStartMin` (60), then 45 g/h.
+  - Zones: Z3 at least 60 g/h, Z4 and Z5 90 g/h. Logic and its tests:
+    `FuelState.mc`, `test/FuelStateTest.mc`.
 - **Gel alert:** full-screen takeover plus a tone when a gel is due. Nothing
-  to press: it counts down 3 s (the ride screen shows the seconds) and then
+  to press: it counts down 5 s (the ride screen shows the seconds) and then
   logs the gel by itself, with a short confirmation tone.
-- **Bell:** press Lap twice within 2.5 s. Plays a ding-ding through the
-  speaker. Lap does nothing else in this field. Both
-  presses still create laps in the FIT file (data fields get no touch input,
-  Lap is the only key they see). A "BELL" banner shows when it
-  triggers. Not a legal replacement for a mechanical bell (StVZO §64a), and silent if device tones are off.
+- **Alert type:** Barlow Condensed (OFL, `fuelzone/fonts/src/`) as bitmap
+  fonts per device, made by `scripts/fonts.py` (needs Pillow). Rerun it
+  after changing sizes or the characters the alert draws.
 - **FIT fields** `carbs` (g) and `gels` on the session, so they show on the
   ride in Garmin Connect.
 - **Live ride:** every 30 s the field saves a snapshot (position, distance,
@@ -45,10 +54,16 @@ One full-screen data field (put it on a 1-field data page):
 - Gel state survives an app restart mid-ride (`Application.Storage`), and is
   cleared when the ride is saved or discarded.
 
+**Edge 840 build** (for a friend): `DEVICE=edge840 scripts/build.sh fuelzone`
+gives `bin/fuelzone-edge840.prg`. It has no live ride and no proxy secrets
+in it (own resource path `settings/edge840/`). The heart rate
+drops to a smaller font on the 246 x 322 screen. Install guide to pass on:
+[`docs/edge840.md`](docs/edge840.md).
+
 Settings (Garmin Connect app → device → Connect IQ apps → Fuel + Zone; sideloaded
-apps may not show them, then change the defaults in `resources/settings/properties.xml`):
-`gelIntervalMin`, `gelGrams`, `carbsPerHour`, `plannedGels`,
-`plannedMinutes`, `hrZones`, `bellOnDoubleLap`, `liveTracking`.
+apps may not show them, then change the defaults in `settings/own/properties.xml`):
+`gelGrams`, `maxCarbsPerHour`, `noRouteStartMin`, `plannedGels`,
+`plannedMinutes`, `hrZones`, `liveTracking` (not in the Edge 840 build).
 
 ## Widgets
 
@@ -59,15 +74,26 @@ WiFi on the bike; without the phone the brief shows the last saved copy.
 
 - **Ride Brief:** readiness ring and reasons, weather and dark-from, packing
   list, gel plan, bike status (`GET /garmin-api/edge-brief`). Tap refreshes.
-- **Music:** Spotify previous / play-pause / next and like
-  (`/music-api/now`, `POST /music-api/cmd`), polls every 5 s while shown. No
-  volume (the iPhone has no remote volume), no shuffle/repeat (Spotify
-  disallows toggling them for this account).
+- **Music:** Spotify previous / play-pause / next and like, straight to the
+  Spotify Web API through the phone (`music/source/Spotify.mc`), no proxy.
+  Polls `/me/player?market=from_token` every 5 s while shown (the market
+  parameter drops the per-track country lists) and keeps only the fields
+  it draws. Liked state and the next track (`/me/player/queue`, about
+  100 KB to parse, of the widget's 1 MB) are asked once per track. No volume (the iPhone has
+  no remote volume), no shuffle/repeat (Spotify disallows toggling them for
+  this account). Needs Spotify Premium.
 
-Both send the narrow `EDGE_API_TOKEN` (only valid for those routes), baked in
-at build time: `scripts/secrets.sh` writes it from `../glance/.env` (or
+  Its own Spotify login, separate from glance's: add
+  `http://127.0.0.1:8888/callback` as a redirect URI of the Spotify app
+  (developer.spotify.com), then run `python3 scripts/spotify-login.py` once.
+  It writes `secrets-spotify/spotify.xml` (gitignored): the app's Basic auth
+  and a refresh token, baked into the build. The widget refreshes its access
+  token hourly by itself. Revoke under spotify.com > Account > Apps.
+
+The Ride Brief sends the narrow `EDGE_API_TOKEN` (only valid for its routes),
+baked in at build time: `scripts/secrets.sh` writes it from `../glance/.env` (or
 `$EDGE_API_TOKEN`) to the gitignored `secrets/edge.xml`. `scripts/build.sh`
-runs it for the widgets automatically.
+runs it for the apps that use it automatically.
 
 ## Setup
 

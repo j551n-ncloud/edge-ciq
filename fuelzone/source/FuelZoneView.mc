@@ -16,9 +16,6 @@ import Toybox.WatchUi;
 class FuelZoneView extends WatchUi.DataField {
     const PAD = 12;
     const FUEL = 0xFF5500;
-    // Two lap presses within this window ring the bell.
-    const DOUBLE_LAP_MS = 2500;
-    const BELL_BANNER_MS = 2000;
     // How often the ride screen refreshes the live-ride snapshot in Storage
     // (the background sender posts the latest one every 5 min).
     const SNAP_MS = 30000;
@@ -30,7 +27,6 @@ class FuelZoneView extends WatchUi.DataField {
     hidden var _lastSnapAt as Number = -SNAP_MS;
     // Starts above any demo timer so the first sample sets up the demo ride.
     hidden var _demoTimer as Number = 0x7FFFFFFF;
-    hidden var _bellOnDoubleLap as Boolean = true;
 
     hidden var _hr as Number? = null;
     hidden var _pow as Array<Number> = [] as Array<Number>;
@@ -42,10 +38,8 @@ class FuelZoneView extends WatchUi.DataField {
     hidden var _timer as Number = 0;
     hidden var _dist as Float? = null;
     hidden var _toDest as Float? = null;
+    hidden var _avgSpeed as Float? = null;
 
-    hidden var _lastLapAt as Number? = null;
-    // System timer until which the KLINGEL banner shows.
-    hidden var _bellBannerUntil as Number = 0;
 
     hidden var _carbsField as FitContributor.Field?;
     hidden var _gelsField as FitContributor.Field?;
@@ -75,12 +69,16 @@ class FuelZoneView extends WatchUi.DataField {
     }
 
     function loadSettings() as Void {
-        _fuel.configure(numProp("gelIntervalMin", 25), numProp("gelGrams", 25),
-            numProp("carbsPerHour", 60), numProp("plannedGels", 0), numProp("plannedMinutes", 0));
+        _fuel.configure(numProp("gelGrams", 30), numProp("maxCarbsPerHour", 90),
+            numProp("plannedGels", 0), numProp("plannedMinutes", 0), numProp("noRouteStartMin", 60));
         _zones.load(strProp("hrZones", ""));
-        _bellOnDoubleLap = boolProp("bellOnDoubleLap", true);
         _liveOn = boolProp("liveTracking", true);
         _demo = boolProp("demoMode", false);
+        // The simulator has no HR zones: sample ones, so the demo shows the
+        // zone raising the carb rate.
+        if (_demo && _zones.limits == null) {
+            _zones.load("120,140,160,175");
+        }
     }
 
     // --- Activity callbacks ---------------------------------------------------
@@ -102,18 +100,23 @@ class FuelZoneView extends WatchUi.DataField {
         _timer = (t == null) ? 0 : t;
         _dist = info.elapsedDistance;
         _toDest = info.distanceToDestination;
+        _avgSpeed = info.averageSpeed;
 
         var running = info.timerState == Activity.TIMER_STATE_ON;
         if (_demo) {
             var f = DemoFeed.sample(System.getTimer());
-            // Loop restart (and first sample): 3 gels so far, last at
-            // 1:15:00, 5 planned. Compared against the demo's own last timer,
-            // not _timer, which compute() already overwrote above.
+            // Loop restart (and first sample): 3 gels so far, the next one
+            // nearly due, 5 planned. Compared against the demo's own last
+            // timer, not _timer, which compute() already overwrote above.
             if ((f[3] as Number) < _demoTimer) {
                 _fuel.reset();
                 _fuel.gelsTaken = 3;
-                _fuel.lastGelMs = 4500000;
+                // 1.5 g short: due ~12 s in at 45 g/h (the simulator's
+                // zones put the flat in Z2) and 10x speed.
+                _fuel.needG = _fuel.gelGrams - 1.5;
                 _fuel.plannedGels = 5;
+                // 5 s of real time at the demo's 10x.
+                _fuel.confirmMs = 5000 * DemoFeed.SPEEDUP;
             }
             _hr = f[0] as Number;
             _speed = (f[1] as Numeric).toFloat();
@@ -125,6 +128,7 @@ class FuelZoneView extends WatchUi.DataField {
             running = true;
         }
 
+        _fuel.update(_timer, estTotalMs(), _hr == null ? 0 : _zones.zoneFor(_hr as Number));
         if (running && _fuel.shouldAlert(_timer)) {
             raiseGelAlert();
             save();
@@ -135,7 +139,7 @@ class FuelZoneView extends WatchUi.DataField {
             saveSnapshot(info, running ? "ride" : "paused");
         }
 
-        // The alert's 3 s countdown ran out: log the gel.
+        // The alert's 5 s countdown ran out: log the gel.
         if (running && _fuel.tick(_timer)) {
             save();
             writeFit();
@@ -143,23 +147,6 @@ class FuelZoneView extends WatchUi.DataField {
                 Attention.playTone(Attention.TONE_SUCCESS);
             }
         }
-    }
-
-    // Lap is only the bell now (gels log themselves after a countdown):
-    // two presses within DOUBLE_LAP_MS ring it.
-    function onTimerLap() as Void {
-        var now = System.getTimer();
-        var last = _lastLapAt;
-        System.println("lap now=" + now + " gap=" + (last == null ? "-" : (now - last).toString())
-            + " bellOn=" + _bellOnDoubleLap + " timer=" + _timer);
-        if (_bellOnDoubleLap && last != null && now - last < DOUBLE_LAP_MS) {
-            _lastLapAt = null;
-            _bellBannerUntil = now + BELL_BANNER_MS;
-            System.println("bell: " + Bell.ring());
-            WatchUi.requestUpdate();
-            return;
-        }
-        _lastLapAt = now;
     }
 
     function onTimerStart() as Void {
@@ -172,11 +159,40 @@ class FuelZoneView extends WatchUi.DataField {
 
     // Called when the ride is saved or discarded.
     function onTimerReset() as Void {
+        rememberSpeed();
         stopLive();
         _fuel.reset();
         _pow = [] as Array<Number>;
         _hasPower = false;
         save();
+    }
+
+    // Expected ride length from the route: timer so far plus distance left
+    // at this ride's average speed. In the first 10 min (warm-up, traffic
+    // lights) the average of past rides instead, 25 km/h before the first
+    // one. -1 without a route.
+    hidden function estTotalMs() as Number {
+        var rest = _toDest;
+        if (rest == null || rest <= 0) {
+            return -1;
+        }
+        var v = _avgSpeed;
+        if (v == null || v < 2.0 || _timer < 600000) {
+            var past = Application.Storage.getValue("pastSpeed");
+            v = past instanceof Float ? past : 6.94;
+        }
+        return _timer + (rest / v * 1000).toNumber();
+    }
+
+    // Average speed of a finished ride of 30 min or more, half-weighted
+    // into the past rides' value (m/s).
+    hidden function rememberSpeed() as Void {
+        var v = _avgSpeed;
+        if (_demo || v == null || v < 2.0 || _timer < 1800000) {
+            return;
+        }
+        var past = Application.Storage.getValue("pastSpeed");
+        Application.Storage.setValue("pastSpeed", past instanceof Float ? (past + v) / 2.0 : v);
     }
 
     // --- Live ride --------------------------------------------------------------
@@ -232,23 +248,13 @@ class FuelZoneView extends WatchUi.DataField {
     // --- Drawing --------------------------------------------------------------
 
     function onUpdate(dc as Dc) as Void {
-        drawScreen(dc);
-        if (System.getTimer() < _bellBannerUntil) {
-            drawBellBanner(dc);
+        // Gel due: the whole page is the alert until it's logged.
+        if (_fuel.counting() && dc.getHeight() >= 300 && dc.getWidth() >= 200) {
+            drawGelAlert(dc, _fuel.gelsTaken + 1, _fuel.plannedGels, _fuel.gelGrams,
+                _fuel.carbsTaken(), _fuel.rate, _fuel.countdownSec(_timer));
+            return;
         }
-    }
-
-    // Amber band at the bottom, so a triggered bell is visible even if the
-    // speaker stays silent (tones off in the device settings).
-    hidden function drawBellBanner(dc as Dc) as Void {
-        var w = dc.getWidth();
-        var h = dc.getHeight();
-        var bh = h / 6;
-        dc.setColor(0xFFAA00, 0xFFAA00);
-        dc.fillRectangle(0, h - bh, w, bh);
-        dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, h - bh / 2, Graphics.FONT_LARGE, "BELL",
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        drawScreen(dc);
     }
 
     hidden function drawScreen(dc as Dc) as Void {
@@ -281,7 +287,12 @@ class FuelZoneView extends WatchUi.DataField {
     hidden function drawHr(dc as Dc, y as Number, w as Number, h as Number) as Void {
         label(dc, PAD, y + 6, "HEART RATE");
         var hr = _hr;
-        value(dc, PAD, y + h - 24, Graphics.FONT_NUMBER_HOT, hr == null ? "--" : hr.toString(), "bpm", _fg);
+        // Smaller screens (Edge 840): the hot font would run into the label.
+        // Number fonts carry ~8 px of empty space on top, hence the slack.
+        var room = h - 30 - dc.getFontHeight(Graphics.FONT_XTINY) + 8;
+        var hrFont = dc.getFontHeight(Graphics.FONT_NUMBER_HOT) <= room
+            ? Graphics.FONT_NUMBER_HOT : Graphics.FONT_NUMBER_MEDIUM;
+        value(dc, PAD, y + h - 24, hrFont, hr == null ? "--" : hr.toString(), "bpm", _fg);
 
         var z = (hr == null) ? 0 : _zones.zoneFor(hr);
         if (z > 0) {
@@ -338,40 +349,40 @@ class FuelZoneView extends WatchUi.DataField {
         if (!_fuel.enabled) {
             label(dc, PAD, y + 6, "FUEL");
             dc.setColor(_muted, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(PAD, y + h / 2, Graphics.FONT_SMALL, "Gel alerts off (< 60 min)", Graphics.TEXT_JUSTIFY_LEFT);
+            dc.drawText(PAD, y + h / 2, Graphics.FONT_SMALL, "No gels (route < 60 min)", Graphics.TEXT_JUSTIFY_LEFT);
             hline(dc, y + h - 1, w);
             return;
         }
 
         var ms = _fuel.msUntilNext(_timer);
-        var overdue = ms < 0;
         // During the alert's countdown: seconds until the gel is logged.
         var counting = _fuel.counting();
-        label(dc, PAD, y + 6, counting ? "GEL NOW, LOGGED IN" : (overdue ? "GEL OVERDUE BY" : "NEXT GEL IN"));
+        label(dc, PAD, y + 6, counting ? "GEL NOW, LOGGED IN"
+            : (_fuel.beforeStart(_timer) ? "FIRST GEL IN" : "NEXT GEL IN"));
         var night = _bg == Graphics.COLOR_BLACK;
-        var countColor = (counting || overdue || night) ? FUEL : _fg;
         if (counting) {
             value(dc, PAD, y + (h * 0.60).toNumber(), Graphics.FONT_NUMBER_MEDIUM,
                 _fuel.countdownSec(_timer).toString(), "s", FUEL);
         } else {
             value(dc, PAD, y + (h * 0.60).toNumber(), Graphics.FONT_NUMBER_MEDIUM,
-                fmtDuration(overdue ? -ms : ms), "min", countColor);
+                ms < 0 ? "--" : fmtDuration(ms), "min", night ? FUEL : _fg);
         }
 
-        // Carbs eaten vs target so far, top right.
+        // Carbs eaten so far and the current rate, top right.
         dc.setColor(_muted, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w - PAD, y + 6, Graphics.FONT_XTINY, "CARBS", Graphics.TEXT_JUSTIFY_RIGHT);
+        dc.drawText(w - PAD, y + 6, Graphics.FONT_XTINY,
+            _fuel.rate > 0 ? "CARBS, " + _fuel.rate + " G/H" : "CARBS", Graphics.TEXT_JUSTIFY_RIGHT);
         dc.setColor(_fg, Graphics.COLOR_TRANSPARENT);
         dc.drawText(w - PAD, y + 6 + dc.getFontHeight(Graphics.FONT_XTINY), Graphics.FONT_MEDIUM,
-            _fuel.carbsTaken() + " / " + _fuel.carbsTarget(_timer) + " g", Graphics.TEXT_JUSTIFY_RIGHT);
+            _fuel.carbsTaken() + " g", Graphics.TEXT_JUSTIFY_RIGHT);
 
-        // Time since last gel.
+        // Progress towards the next gel.
         var barY = y + (h * 0.66).toNumber();
         var barW = w - 2 * PAD;
         dc.setColor(_line, _line);
         dc.fillRectangle(PAD, barY, barW, 8);
         dc.setColor(FUEL, FUEL);
-        dc.fillRectangle(PAD, barY, (barW * _fuel.sinceLastFraction(_timer)).toNumber(), 8);
+        dc.fillRectangle(PAD, barY, (barW * _fuel.progress(_timer)).toNumber(), 8);
 
         // One dot per planned gel (or per gel so far + the next one).
         var taken = _fuel.gelsTaken;
@@ -420,8 +431,8 @@ class FuelZoneView extends WatchUi.DataField {
         dc.setColor(_muted, Graphics.COLOR_TRANSPARENT);
         dc.drawText(w / 2, 2, Graphics.FONT_XTINY, "GEL IN", Graphics.TEXT_JUSTIFY_CENTER);
         var ms = _fuel.msUntilNext(_timer);
-        dc.setColor(ms < 0 ? FUEL : _fg, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, h / 2 + 6, Graphics.FONT_NUMBER_MEDIUM, fmtDuration(ms < 0 ? -ms : ms),
+        dc.setColor(_fuel.counting() ? FUEL : _fg, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(w / 2, h / 2 + 6, Graphics.FONT_NUMBER_MEDIUM, ms < 0 ? "--" : fmtDuration(ms),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
@@ -487,7 +498,7 @@ class FuelZoneView extends WatchUi.DataField {
     hidden function raiseGelAlert() as Void {
         if (WatchUi.DataField has :showAlert) {
             showAlert(new GelAlert(_fuel.gelsTaken + 1, _fuel.plannedGels, _fuel.gelGrams,
-                _fuel.carbsTaken(), _fuel.carbsTarget(_timer)));
+                _fuel.carbsTaken(), _fuel.rate));
         }
         // Muted in demo mode, the simulator loops the ride.
         if (!_demo && Attention has :playTone) {

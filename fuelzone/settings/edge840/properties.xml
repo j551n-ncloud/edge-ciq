@@ -1,0 +1,39 @@
+<!-- Edge 840 build (shared with a friend): no live ride (the proxy token is
+     not in this build). -->
+<resources>
+    <properties>
+        <property id="gelGrams" type="number">30</property>
+        <!-- Gut limit; the rate itself follows ride length and HR zone. -->
+        <property id="maxCarbsPerHour" type="number">90</property>
+        <!-- No route and no planned time: first gel after this. -->
+        <property id="noRouteStartMin" type="number">60</property>
+        <property id="plannedGels" type="number">0</property>
+        <property id="plannedMinutes" type="number">0</property>
+        <property id="hrZones" type="string"></property>
+        <!-- Fixed off, no setting UI. -->
+        <property id="liveTracking" type="boolean">false</property>
+        <!-- Simulator only: plays a fake ride (DemoFeed.mc). No setting UI. -->
+        <property id="demoMode" type="boolean">false</property>
+    </properties>
+
+    <settings>
+        <setting propertyKey="@Properties.gelGrams" title="@Strings.SetGelGrams">
+            <settingConfig type="numeric" min="5" max="100"/>
+        </setting>
+        <setting propertyKey="@Properties.maxCarbsPerHour" title="@Strings.SetMaxCarbs">
+            <settingConfig type="numeric" min="20" max="150"/>
+        </setting>
+        <setting propertyKey="@Properties.noRouteStartMin" title="@Strings.SetNoRouteStart">
+            <settingConfig type="numeric" min="0" max="180"/>
+        </setting>
+        <setting propertyKey="@Properties.plannedGels" title="@Strings.SetPlannedGels">
+            <settingConfig type="numeric" min="0" max="20"/>
+        </setting>
+        <setting propertyKey="@Properties.plannedMinutes" title="@Strings.SetPlannedMinutes">
+            <settingConfig type="numeric" min="0" max="900"/>
+        </setting>
+        <setting propertyKey="@Properties.hrZones" title="@Strings.SetHrZones">
+            <settingConfig type="alphaNumeric"/>
+        </setting>
+    </settings>
+</resources>

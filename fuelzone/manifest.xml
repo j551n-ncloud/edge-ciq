@@ -4,6 +4,7 @@
     <iq:application id="83543292d8f84fd8a16ba5cb769b0614" type="datafield" name="@Strings.AppName" entry="FuelZoneApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="3.2.0">
         <iq:products>
             <iq:product id="edge1030plus"/>
+            <iq:product id="edge840"/>
         </iq:products>
         <iq:permissions>
             <iq:uses-permission id="Background"/>

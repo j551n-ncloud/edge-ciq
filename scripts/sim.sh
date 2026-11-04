@@ -5,4 +5,5 @@ APP="${1:-fuelzone}"
 "$ROOT/scripts/build.sh" "$APP"
 open -a "$SDK/bin/ConnectIQ.app" 2>/dev/null || "$SDK/bin/connectiq" &
 sleep 3
-"$SDK/bin/monkeydo" "$ROOT/bin/$APP.prg" "$DEVICE"
+OUT="$APP"; [[ "$DEVICE" != edge1030plus ]] && OUT="$APP-$DEVICE"
+"$SDK/bin/monkeydo" "$ROOT/bin/$OUT.prg" "$DEVICE"

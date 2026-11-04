@@ -1,0 +1,6 @@
+<resources>
+    <properties>
+        <!-- Simulator only: shows DemoBrief.mc's sample instead of calling glance. No setting UI. -->
+        <property id="demoMode" type="boolean">false</property>
+    </properties>
+</resources>

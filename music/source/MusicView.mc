@@ -1,20 +1,29 @@
+import Toybox.Application;
+import Toybox.Communications;
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.System;
 import Toybox.Timer;
 import Toybox.WatchUi;
 
-// Spotify remote through the glance proxy (/music-api/now and /cmd), laid out
-// like the design canvas at 282x470:
+// Spotify remote, straight to the Spotify Web API through the phone
+// (Spotify.mc), laid out like the design canvas at 282x470:
 //   header 34 | now playing 150 | prev / play-pause / next 120 |
-//   like 84 | footer (hint or status)
+//   like 84 | up next (the rest); status in the header
 // No shuffle/repeat: Spotify disallows toggling them for this account
 // (actions.disallows), so the buttons could only ever fail.
 // Polls now-playing every 5 s while the widget is on screen.
 class MusicView extends WatchUi.View {
     const POLL_MS = 5000;
+    // Spotify applies commands asynchronously; read back after this.
+    const SETTLE_MS = 600;
     const GAP = 8;
+    // market=from_token drops the per-track country lists, by far the
+    // largest part of the answer.
+    const PLAYER = "/me/player?market=from_token&additional_types=track";
 
+    // Only what the screen shows, copied out of Spotify's answer:
+    // active, playing, title, artist, posMs, lenMs, device, id.
     hidden var _now as Dictionary? = null;
     hidden var _status as String? = "Loading...";
     hidden var _busy as Boolean = false;
@@ -23,11 +32,36 @@ class MusicView extends WatchUi.View {
     // Edge rejects them).
     hidden var _inFlight as Boolean = false;
     hidden var _poll as Timer.Timer = new Timer.Timer();
+    hidden var _settle as Timer.Timer = new Timer.Timer();
+    hidden var _sp as Spotify = new Spotify();
+    // Second connection for the liked check and the queue, so the large
+    // queue answer never blocks the buttons or the poll.
+    hidden var _bg as Spotify = new Spotify();
+    hidden var _bgBusy as Boolean = false;
+    // Liked state per track id, so it's only asked once per song.
+    hidden var _likedId as String? = null;
+    hidden var _liked as Boolean? = null;
+    // "Title - Artist" of the next track in the queue, asked once per song.
+    hidden var _next as String? = null;
+    hidden var _queueFor as String? = null;
     // [x, y, w, h, cmd] per button, rebuilt on every draw.
     hidden var _buttons as Array<Array> = [] as Array<Array>;
 
     function initialize() {
         View.initialize();
+        // Last known state, shown at once while the first answer is on its way.
+        var c = Application.Storage.getValue("music");
+        if (c instanceof Array && c.size() == 4) {
+            _now = c[0] instanceof Dictionary ? c[0] as Dictionary : null;
+            _likedId = c[1] instanceof String ? c[1] as String : null;
+            _queueFor = _likedId;
+            _liked = c[2] instanceof Boolean ? c[2] as Boolean : null;
+            _next = c[3] instanceof String ? c[3] as String : null;
+        }
+    }
+
+    hidden function saveCache() as Void {
+        Application.Storage.setValue("music", [_now, _likedId, _liked, _next]);
     }
 
     function onShow() as Void {
@@ -37,27 +71,112 @@ class MusicView extends WatchUi.View {
 
     function onHide() as Void {
         _poll.stop();
+        _settle.stop();
     }
 
-    // --- Proxy ------------------------------------------------------------------
+    // --- Spotify -------------------------------------------------------------
 
     function refresh() as Void {
         if (!_busy && !_inFlight) {
             _inFlight = true;
-            Api.get("/music-api/now", method(:onNow));
+            _sp.call(Communications.HTTP_REQUEST_METHOD_GET, PLAYER, null, method(:onPlayer));
         }
     }
 
-    function onNow(code as Number, data as Dictionary or String or Null) as Void {
+    function onPlayer(code as Number, data as Dictionary or String or Null) as Void {
         _busy = false;
         _inFlight = false;
-        if (code == 200 && data instanceof Dictionary) {
-            _now = data;
+        if (code == 200 && data instanceof Dictionary && data["item"] instanceof Dictionary) {
+            var was = _now;
+            _now = compact(data);
+            data = null;
+            _status = null;
+            var id = (_now as Dictionary)["id"];
+            if (id instanceof String && !id.equals(_likedId) && !_bgBusy) {
+                // New song: liked state, then up next, on the second line.
+                _likedId = id;
+                _liked = null;
+                _next = null;
+                _bgBusy = true;
+                _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
+                    "/me/library/contains?uris=spotify%3Atrack%3A" + id, null, method(:onLiked));
+            }
+            if (was == null || was["playing"] != (_now as Dictionary)["playing"]) {
+                saveCache();
+            }
+        } else if (code == 200 || code == 204) {
+            // Nothing playing on any device.
+            _now = {"active" => false};
             _status = null;
         } else {
-            _status = Api.errorText(code, data);
+            _status = Spotify.errorText(code, data);
             System.println("music error " + code + ": " + _status);
         }
+        WatchUi.requestUpdate();
+    }
+
+    hidden function compact(st as Dictionary) as Dictionary {
+        var it = st["item"] as Dictionary;
+        var artists = "";
+        if (it["artists"] instanceof Array) {
+            var a = it["artists"] as Array;
+            for (var i = 0; i < a.size(); i++) {
+                if (a[i] instanceof Dictionary && (a[i] as Dictionary)["name"] instanceof String) {
+                    artists += (artists.length() > 0 ? ", " : "") + (a[i] as Dictionary)["name"];
+                }
+            }
+        }
+        var dev = st["device"];
+        return {
+            "active" => true,
+            "playing" => st["is_playing"] == true,
+            "title" => it["name"] instanceof String ? it["name"] : "",
+            "artist" => artists,
+            "posMs" => st["progress_ms"] instanceof Number ? st["progress_ms"] : 0,
+            "lenMs" => it["duration_ms"] instanceof Number ? it["duration_ms"] : 0,
+            "device" => (dev instanceof Dictionary && dev["name"] instanceof String) ? dev["name"] : null,
+            "id" => it["id"]
+        };
+    }
+
+    // /me/library/contains answers a JSON array: [true] or [false].
+    function onLiked(code as Number, data) as Void {
+        _bgBusy = false;
+        if (code == 200 && data instanceof Array && (data as Array).size() > 0) {
+            _liked = (data as Array)[0] == true;
+        } else {
+            System.println("liked check " + code + ": " + data);
+        }
+        // Then the next track, once per song (the queue answer is large).
+        var id = _likedId;
+        if (id != null && !id.equals(_queueFor)) {
+            _queueFor = id;
+            _bgBusy = true;
+            _bg.call(Communications.HTTP_REQUEST_METHOD_GET, "/me/player/queue", null, method(:onQueue));
+        }
+        saveCache();
+        WatchUi.requestUpdate();
+    }
+
+    function onQueue(code as Number, data as Dictionary or String or Null) as Void {
+        _bgBusy = false;
+        _next = null;
+        if (code == 200 && data instanceof Dictionary && data["queue"] instanceof Array
+                && (data["queue"] as Array).size() > 0 && (data["queue"] as Array)[0] instanceof Dictionary) {
+            var t = (data["queue"] as Array)[0] as Dictionary;
+            var name = t["name"] instanceof String ? t["name"] as String : "";
+            var by = "";
+            if (t["artists"] instanceof Array && (t["artists"] as Array).size() > 0
+                    && (t["artists"] as Array)[0] instanceof Dictionary) {
+                var a = ((t["artists"] as Array)[0] as Dictionary)["name"];
+                by = a instanceof String ? " - " + a : "";
+            }
+            _next = name + by;
+        } else {
+            System.println("queue " + code);
+        }
+        data = null;
+        saveCache();
         WatchUi.requestUpdate();
     }
 
@@ -67,11 +186,56 @@ class MusicView extends WatchUi.View {
             WatchUi.requestUpdate();
             return;
         }
+        var now = _now;
+        var id = now != null ? now["id"] : null;
+        var m = Communications.HTTP_REQUEST_METHOD_PUT;
+        var path;
+        if (cmd.equals("next") || cmd.equals("previous")) {
+            m = Communications.HTTP_REQUEST_METHOD_POST;
+            path = "/me/player/" + cmd;
+        } else if (cmd.equals("like") || cmd.equals("unlike")) {
+            if (!(id instanceof String)) {
+                return;
+            }
+            if (cmd.equals("unlike")) {
+                m = Communications.HTTP_REQUEST_METHOD_DELETE;
+            }
+            path = "/me/library?uris=spotify%3Atrack%3A" + id;
+            _liked = cmd.equals("like");
+        } else {
+            var playing = now != null && now["playing"] == true;
+            path = (cmd.equals("toggle") && playing) ? "/me/player/pause" : "/me/player/play";
+            if (now != null && now["active"] == true) {
+                now["playing"] = !playing;
+            }
+        }
         _busy = true;
         _inFlight = true;
         _status = "...";
         WatchUi.requestUpdate();
-        Api.post("/music-api/cmd", {"cmd" => cmd}, method(:onNow));
+        _sp.call(m, path, m == Communications.HTTP_REQUEST_METHOD_DELETE ? null : {}, method(:onCmd));
+    }
+
+    function onCmd(code as Number, data as Dictionary or String or Null) as Void {
+        _inFlight = false;
+        // Spotify confirms commands with an empty body, which the Edge
+        // reports as -400 (body not JSON); its errors always carry JSON.
+        if ((code >= 200 && code < 300) || code == -400) {
+            _status = null;
+            _settle.start(method(:afterCmd), SETTLE_MS, false);
+        } else {
+            _busy = false;
+            _status = Spotify.errorText(code, data);
+            System.println("music cmd " + code + ": " + _status);
+            // The optimistic flip was wrong; read the real state.
+            _likedId = null;
+        }
+        WatchUi.requestUpdate();
+    }
+
+    function afterCmd() as Void {
+        _busy = false;
+        refresh();
     }
 
     // --- Input (from MusicDelegate) ----------------------------------------------
@@ -101,12 +265,15 @@ class MusicView extends WatchUi.View {
         var now = _now;
         var active = now != null && now["active"] == true;
 
-        // Header
+        // Header; a status (error, "...") takes the device's place.
         var hH = (34 * s).toNumber();
         dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
         dc.drawText(pad, hH / 2, Graphics.FONT_XTINY, "MUSIC", Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
-        var dev = (now != null && now["device"] instanceof String) ? "Spotify - " + now["device"] : "Spotify";
-        dc.drawText(w - pad, hH / 2, Graphics.FONT_XTINY, Ui.fit(dc, dev, Graphics.FONT_XTINY, w / 2),
+        var st = _status;
+        var right = st != null ? st
+            : ((now != null && now["device"] instanceof String) ? "Spotify - " + now["device"] : "Spotify");
+        dc.setColor(st != null ? Ui.WARN : Ui.INK, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(w - pad, hH / 2, Graphics.FONT_XTINY, Ui.fit(dc, right, Graphics.FONT_XTINY, w * 2 / 3),
             Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
         Ui.hline(dc, hH - 1, w);
 
@@ -163,19 +330,21 @@ class MusicView extends WatchUi.View {
         // Like, full width
         y += hC;
         var hR = (84 * s).toNumber();
-        var rh = hR - 12;
-        var liked = active && now["liked"] == true;
-        textButton(dc, pad, y, w - 2 * pad, rh, liked, Ui.FUEL, liked ? "unlike" : "like", liked ? "LIKED" : "LIKE");
+        var liked = active && _liked == true;
+        textButton(dc, pad, y, w - 2 * pad, hR - 12, liked, Ui.FUEL, liked ? "unlike" : "like", liked ? "LIKED" : "LIKE");
 
-        // Footer: status or a hint
+        // Up next, in the space below
         y += hR;
         Ui.hline(dc, y, w);
-        var st = _status;
-        dc.setColor(st != null ? Ui.WARN : Ui.MUTED, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, y + (h - y) / 2, Graphics.FONT_XTINY,
-            Ui.fit(dc, st != null ? st : "Tap a button", Graphics.FONT_XTINY, w - 2 * pad),
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-
+        var nx = _next;
+        if (active && nx != null) {
+            var fh = dc.getFontHeight(Graphics.FONT_XTINY) + 2 + dc.getFontHeight(Graphics.FONT_SMALL);
+            var ny = y + (h - y - fh) / 2;
+            Ui.label(dc, pad, ny, "UP NEXT");
+            dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(pad, ny + dc.getFontHeight(Graphics.FONT_XTINY) + 2, Graphics.FONT_SMALL,
+                Ui.fit(dc, nx, Graphics.FONT_SMALL, w - 2 * pad), Graphics.TEXT_JUSTIFY_LEFT);
+        }
     }
 
     hidden function button(dc as Dc, x as Number, y as Number, bw as Number, bh as Number,

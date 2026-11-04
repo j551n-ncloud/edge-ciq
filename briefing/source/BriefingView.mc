@@ -7,7 +7,9 @@ import Toybox.WatchUi;
 
 // Pre-ride brief from the glance proxy (GET /garmin-api/edge-brief), laid out
 // like the design canvas at 282x470:
-//   header 34 | readiness 124 | weather 62 | pack 76 | plan/fuel 52 | bike 40 | footer
+//   header 34 | readiness 124 | weather 62 | pack 76 | plan/fuel 52 | bike 40
+// with the sections stretched evenly to the real height (no footer; a status
+// shows in the header instead of the update time).
 // The last brief is kept in Storage, so it still shows without the phone.
 class BriefingView extends WatchUi.View {
 
@@ -27,6 +29,12 @@ class BriefingView extends WatchUi.View {
     }
 
     function refresh() as Void {
+        if (Application.Properties.getValue("demoMode") == true) {
+            _brief = DemoBrief.sample();
+            _status = null;
+            WatchUi.requestUpdate();
+            return;
+        }
         _status = "Updating...";
         WatchUi.requestUpdate();
         Api.get("/garmin-api/edge-brief", method(:onBrief));
@@ -56,14 +64,16 @@ class BriefingView extends WatchUi.View {
         dc.clear();
 
         var b = _brief;
-        var at = (b != null && b["at"] instanceof String) ? "updated " + b["at"] : "";
+        var st = _status;
+        var right = st != null ? st : ((b != null && b["at"] instanceof String) ? "updated " + b["at"] : "");
 
-        // Header
+        // Header; a status (error, "Updating...") takes the update time's place.
         var hH = (34 * s).toNumber();
         dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
         dc.drawText(pad, hH / 2, Graphics.FONT_XTINY, "BEFORE THE RIDE", Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.setColor(Ui.MUTED, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w - pad, hH / 2, Graphics.FONT_XTINY, at, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.setColor(st != null ? Ui.WARN : Ui.MUTED, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(w - pad, hH / 2, Graphics.FONT_XTINY, Ui.fit(dc, right, Graphics.FONT_XTINY, w / 2),
+            Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
         Ui.hline(dc, hH - 1, w);
 
         var y = hH;
@@ -71,20 +81,15 @@ class BriefingView extends WatchUi.View {
             dc.setColor(Ui.MUTED, Graphics.COLOR_TRANSPARENT);
             dc.drawText(w / 2, h / 2, Graphics.FONT_SMALL, "No brief yet", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         } else {
-            y = drawReadiness(dc, b, y, w, (124 * s).toNumber());
-            y = drawWeather(dc, b, y, w, (62 * s).toNumber());
-            y = drawPack(dc, b, y, w, (76 * s).toNumber());
-            y = drawPlan(dc, b, y, w, (52 * s).toNumber());
-            y = drawBike(dc, b, y, w, (40 * s).toNumber());
+            // The design's sections (354 px under the header) stretched to
+            // the height that's left; bike takes the remainder.
+            var k = (h - hH) / 354.0;
+            y = drawReadiness(dc, b, y, w, (124 * k).toNumber());
+            y = drawWeather(dc, b, y, w, (62 * k).toNumber());
+            y = drawPack(dc, b, y, w, (76 * k).toNumber());
+            y = drawPlan(dc, b, y, w, (52 * k).toNumber());
+            drawBike(dc, b, y, w, h - y);
         }
-
-        // Footer
-        var st = _status;
-        var fy = y + (h - y) / 2;
-        dc.setColor(st != null ? Ui.WARN : Ui.MUTED, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, fy, Graphics.FONT_XTINY,
-            Ui.fit(dc, st != null ? st : "Tap to refresh", Graphics.FONT_XTINY, w - 2 * pad),
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
     }
 
@@ -92,21 +97,23 @@ class BriefingView extends WatchUi.View {
         var r = b["ready"];
         if (r instanceof Dictionary) {
             var score = r["score"] instanceof Number ? r["score"] as Number : 0;
-            var cx = Ui.PAD + 42;
+            // Ring sized to the section (36 px at the design's 124).
+            var rr = h * 36 / 124;
+            var cx = Ui.PAD + rr + 6;
             var cy = y + h / 2;
             var ringColor = score >= 70 ? Ui.OK : (score >= 45 ? Ui.AMBER : 0xFF0000);
             dc.setPenWidth(8);
             dc.setColor(Ui.LINE, Graphics.COLOR_TRANSPARENT);
-            dc.drawCircle(cx, cy, 36);
+            dc.drawCircle(cx, cy, rr);
             if (score > 0) {
                 dc.setColor(ringColor, Graphics.COLOR_TRANSPARENT);
-                dc.drawArc(cx, cy, 36, Graphics.ARC_CLOCKWISE, 90, 90 - (360 * score / 100));
+                dc.drawArc(cx, cy, rr, Graphics.ARC_CLOCKWISE, 90, 90 - (360 * score / 100));
             }
             dc.setPenWidth(1);
             dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
             dc.drawText(cx, cy, Graphics.FONT_NUMBER_MILD, score.toString(), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
-            var tx = cx + 54;
+            var tx = cx + rr + 18;
             var ty = y + 14;
             var rec = r["rec"] instanceof String ? r["rec"] as String : "";
             dc.drawText(tx, ty, Graphics.FONT_SMALL, Ui.fit(dc, rec, Graphics.FONT_SMALL, w - tx - Ui.PAD), Graphics.TEXT_JUSTIFY_LEFT);
@@ -230,7 +237,6 @@ class BriefingView extends WatchUi.View {
             dc.drawText(Ui.PAD + 16, mid, Graphics.FONT_XTINY, Ui.fit(dc, text, Graphics.FONT_XTINY, w - 2 * Ui.PAD - 16),
                 Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
         }
-        Ui.hline(dc, y + h - 1, w);
         return y + h;
     }
 }

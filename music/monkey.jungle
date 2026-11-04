@@ -1,3 +1,5 @@
 project.manifest = manifest.xml
 base.sourcePath = source;../shared/widget
-base.resourcePath = resources;../secrets
+# secrets-spotify/spotify.xml: the widget's own Spotify login,
+# written by scripts/spotify-login.py, never committed.
+base.resourcePath = resources;../secrets-spotify

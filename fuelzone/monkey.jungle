@@ -1,4 +1,8 @@
 project.manifest = manifest.xml
-base.sourcePath = source;../shared/bell
+base.sourcePath = source
 # secrets/edge.xml: proxy URL + EDGE_API_TOKEN for the live-ride sender
-base.resourcePath = resources;../secrets
+# fonts/<device>: gel alert type, scripts/fonts.py
+base.resourcePath = resources;settings/own;fonts/edge1030plus;../secrets
+
+# Edge 840 (a friend's): no proxy secrets, live ride off.
+edge840.resourcePath = resources;settings/edge840;fonts/edge840
