@@ -27,6 +27,9 @@ class MusicView extends WatchUi.View {
     hidden var _now as Dictionary? = null;
     hidden var _status as String? = "Loading...";
     hidden var _busy as Boolean = false;
+    // The play/pause path just sent, to flip it if Spotify says it's
+    // already in that state (403); null for other commands.
+    hidden var _lastToggle as String? = null;
     // A request is out over Bluetooth; don't stack another one on it (a slow
     // phone link plus the 5 s poll would otherwise queue requests until the
     // Edge rejects them).
@@ -232,11 +235,27 @@ class MusicView extends WatchUi.View {
         _inFlight = true;
         _status = "...";
         WatchUi.requestUpdate();
+        _lastToggle = path.equals("/me/player/pause") || path.equals("/me/player/play") ? path : null;
         _sp.call(m, path, m == Communications.HTTP_REQUEST_METHOD_DELETE ? null : {}, method(:onCmd));
     }
 
     function onCmd(code as Number, data as Dictionary or String or Null) as Void {
         _inFlight = false;
+        // Pause on a paused player (or play on a playing one) is refused
+        // with 403 when the shown state was behind: send the other one.
+        var t = _lastToggle;
+        if (code == 403 && t != null) {
+            _lastToggle = null;
+            var other = t.equals("/me/player/pause") ? "/me/player/play" : "/me/player/pause";
+            var now = _now;
+            if (now != null && now["active"] == true) {
+                now["playing"] = other.equals("/me/player/play");
+            }
+            _inFlight = true;
+            _sp.call(Communications.HTTP_REQUEST_METHOD_PUT, other, {}, method(:onCmd));
+            return;
+        }
+        _lastToggle = null;
         // Spotify confirms commands with an empty body, which the Edge
         // reports as -400 (body not JSON); its errors always carry JSON.
         if ((code >= 200 && code < 300) || code == -400) {
