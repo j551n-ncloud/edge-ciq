@@ -199,8 +199,9 @@ class BriefingView extends WatchUi.View {
     hidden function drawPlan(dc as Dc, b as Dictionary, y as Number, w as Number, h as Number) as Number {
         var plan = b["plan"];
         var fuel = b["fuel"];
-        var every = (fuel instanceof Dictionary && fuel["everyMin"] instanceof Number) ? fuel["everyMin"] : 25;
-        var gelG = (fuel instanceof Dictionary && fuel["gelG"] instanceof Number) ? fuel["gelG"] : 25;
+        var every = (fuel instanceof Dictionary && fuel["everyMin"] instanceof Number) ? fuel["everyMin"] : 40;
+        var gelG = (fuel instanceof Dictionary && fuel["gelG"] instanceof Number) ? fuel["gelG"] : 30;
+        var first = (fuel instanceof Dictionary && fuel["firstMin"] instanceof Number) ? fuel["firstMin"] as Number : 0;
         var vy = y + 6 + dc.getFontHeight(Graphics.FONT_XTINY);
         if (plan instanceof Dictionary && plan["min"] instanceof Number && (plan["min"] as Number) > 0) {
             var min = plan["min"] as Number;
@@ -219,7 +220,11 @@ class BriefingView extends WatchUi.View {
         } else {
             Ui.label(dc, Ui.PAD, y + 6, "FUEL");
             dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(Ui.PAD, vy, Graphics.FONT_SMALL, "1 gel (" + gelG + " g) every " + every + " min", Graphics.TEXT_JUSTIFY_LEFT);
+            // No planned ride: the field's rule without a route.
+            var line = first > 0
+                ? gelG + " g gel after " + (first % 60 == 0 ? (first / 60) + " h" : first + " min") + ", then every " + every + " min"
+                : "1 gel (" + gelG + " g) every " + every + " min";
+            dc.drawText(Ui.PAD, vy, Graphics.FONT_SMALL, Ui.fit(dc, line, Graphics.FONT_SMALL, w - 2 * Ui.PAD), Graphics.TEXT_JUSTIFY_LEFT);
         }
         Ui.hline(dc, y + h - 1, w);
         return y + h;

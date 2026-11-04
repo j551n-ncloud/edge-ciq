@@ -22,7 +22,7 @@ module DemoBrief {
             },
             "pack" => ["Arm warmers", "Gilet", "Lights", "Rain jacket"],
             "plan" => {"min" => 150, "dest" => "Neckarsteinach", "km" => 75, "gels" => 5, "carbs" => 150},
-            "fuel" => {"everyMin" => 30, "gelG" => 30, "perHour" => 60},
+            "fuel" => {"everyMin" => 40, "gelG" => 30, "perHour" => 45, "firstMin" => 60},
             "bike" => {"ok" => true, "note" => "Chain in 420 km"}
         };
     }
