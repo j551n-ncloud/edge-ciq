@@ -16,7 +16,11 @@ import Toybox.WatchUi;
 class MusicView extends WatchUi.View {
     const POLL_MS = 5000;
     // Spotify applies commands asynchronously; read back after this.
-    const SETTLE_MS = 1000;
+    // First read-back after a command; while Spotify still reports the old
+    // song after a skip, ask again every RETRY_MS, up to MAX_RETRIES times.
+    const SETTLE_MS = 500;
+    const RETRY_MS = 600;
+    const MAX_RETRIES = 3;
     const GAP = 8;
     // market=from_token drops the per-track country lists, by far the
     // largest part of the answer.
@@ -51,6 +55,12 @@ class MusicView extends WatchUi.View {
     hidden var _liked as Boolean? = null;
     // "Title - Artist" of the next track in the queue, asked once per song.
     hidden var _next as String? = null;
+    // The queue's next track, shown at once on "next" before Spotify confirms:
+    // {title, artist, lenMs, id}.
+    hidden var _nextTrack as Dictionary? = null;
+    // Id of the song skipped away from, while waiting for Spotify to switch.
+    hidden var _skipFrom as String? = null;
+    hidden var _retries as Number = 0;
     hidden var _queueFor as String? = null;
     // [x, y, w, h, cmd] per button, rebuilt on every draw.
     hidden var _buttons as Array<Array> = [] as Array<Array>;
@@ -97,6 +107,16 @@ class MusicView extends WatchUi.View {
         _busy = false;
         _inFlight = false;
         if (code == 200 && data instanceof Dictionary && data["item"] instanceof Dictionary) {
+            var item = data["item"] as Dictionary;
+            // Spotify hasn't switched yet: keep the song shown, ask again.
+            var from = _skipFrom;
+            if (from != null && from.equals(item["id"]) && _retries < MAX_RETRIES) {
+                _retries++;
+                _busy = true;
+                _settle.start(method(:afterCmd), RETRY_MS, false);
+                return;
+            }
+            _skipFrom = null;
             var was = _now;
             _now = compact(data);
             data = null;
@@ -107,6 +127,7 @@ class MusicView extends WatchUi.View {
                 _likedId = id;
                 _liked = null;
                 _next = null;
+                _nextTrack = null;
                 _bgBusy = true;
                 _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
                     "/me/library/contains?uris=spotify%3Atrack%3A" + id, null, method(:onLiked));
@@ -173,17 +194,24 @@ class MusicView extends WatchUi.View {
     function onQueue(code as Number, data as Dictionary or String or Null) as Void {
         _bgBusy = false;
         _next = null;
+        _nextTrack = null;
         if (code == 200 && data instanceof Dictionary && data["queue"] instanceof Array
                 && (data["queue"] as Array).size() > 0 && (data["queue"] as Array)[0] instanceof Dictionary) {
             var t = (data["queue"] as Array)[0] as Dictionary;
             var name = t["name"] instanceof String ? t["name"] as String : "";
-            var by = "";
+            var artist = "";
             if (t["artists"] instanceof Array && (t["artists"] as Array).size() > 0
                     && (t["artists"] as Array)[0] instanceof Dictionary) {
                 var a = ((t["artists"] as Array)[0] as Dictionary)["name"];
-                by = a instanceof String ? " - " + a : "";
+                artist = a instanceof String ? a : "";
             }
-            _next = name + by;
+            _next = name + (artist.length() > 0 ? " - " + artist : "");
+            _nextTrack = {
+                "title" => name,
+                "artist" => artist,
+                "lenMs" => t["duration_ms"] instanceof Number ? t["duration_ms"] : 0,
+                "id" => t["id"]
+            };
         } else {
             System.println("queue " + code);
         }
@@ -206,6 +234,25 @@ class MusicView extends WatchUi.View {
         if (cmd.equals("next") || cmd.equals("previous")) {
             m = Communications.HTTP_REQUEST_METHOD_POST;
             path = "/me/player/" + cmd;
+            _skipFrom = id instanceof String ? id : null;
+            _retries = 0;
+            // Next: show the queued song right away; Spotify confirms after.
+            var nt = _nextTrack;
+            if (cmd.equals("next") && nt != null && now != null) {
+                _now = {
+                    "active" => true,
+                    "playing" => true,
+                    "title" => nt["title"],
+                    "artist" => nt["artist"],
+                    "posMs" => 0,
+                    "lenMs" => nt["lenMs"],
+                    "device" => now["device"],
+                    "id" => nt["id"]
+                };
+                _liked = null;
+                _next = null;
+                _nextTrack = null;
+            }
         } else if (cmd.equals("like") || cmd.equals("unlike")) {
             if (!(id instanceof String)) {
                 return;
@@ -258,8 +305,10 @@ class MusicView extends WatchUi.View {
             _busy = false;
             _status = Spotify.errorText(code, data);
             System.println("music cmd " + code + ": " + _status);
-            // The optimistic flip was wrong; read the real state.
+            // The optimistic flip (or shown next song) was wrong; read the
+            // real state.
             _likedId = null;
+            _skipFrom = null;
         }
         WatchUi.requestUpdate();
     }
