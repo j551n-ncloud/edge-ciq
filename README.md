@@ -78,8 +78,13 @@ WiFi on the bike; without the phone the brief shows the last saved copy.
   Spotify Web API through the phone (`music/source/Spotify.mc`), no proxy.
   Polls `/me/player?market=from_token` every 5 s while shown (the market
   parameter drops the per-track country lists) and keeps only the fields
-  it draws. Liked state and the next track (`/me/player/queue`, about
-  100 KB to parse, of the widget's 1 MB) are asked once per track. GETs carry a changing
+  it draws. Liked state and up next are asked once per track. Up next comes
+  from the playlist (`/playlists/{id}/items`, song ids once to find the
+  position, then ~120 bytes for the next song) or album, with shuffle off.
+  Not from `/me/player/queue`: 35-50 KB, and the Edge rejects it (-402).
+  With shuffle, radio or self-queued songs up next stays empty. On "next"
+  the known next song shows at once; Spotify confirms after 0.5 s (retries
+  while it still reports the old song). GETs carry a changing
   parameter: the iPhone's Garmin Connect app otherwise answered repeated
   requests from its cache (a song several skips old). No volume (the iPhone has
   no remote volume), no shuffle/repeat (Spotify disallows toggling them for

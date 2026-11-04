@@ -62,6 +62,18 @@ class MusicView extends WatchUi.View {
     hidden var _skipFrom as String? = null;
     hidden var _retries as Number = 0;
     hidden var _queueFor as String? = null;
+    // Up next comes from the playlist or album itself (small answers), not
+    // from /me/player/queue: that's 35-50 KB and the Edge rejects it (-402).
+    // Position of the current song in the playlist _plUri, -1 unknown; the
+    // song list is fetched in pages of PL_PAGE ids, only to find it.
+    const PL_PAGE = 100;
+    const PL_MAX_PAGES = 10;
+    hidden var _plUri as String? = null;
+    hidden var _plIndex as Number = -1;
+    hidden var _plPage as Number = 0;
+    // Id of the song at _plIndex + 1 (what up next showed); survives the
+    // optimistic "next", so a skip within the playlist needs no id lookup.
+    hidden var _expectId as String? = null;
     // [x, y, w, h, cmd] per button, rebuilt on every draw.
     hidden var _buttons as Array<Array> = [] as Array<Array>;
 
@@ -166,7 +178,12 @@ class MusicView extends WatchUi.View {
             }
         }
         var dev = st["device"];
+        var ctx = st["context"];
         return {
+            // For up next: playlist/album uri, shuffle, track number.
+            "ctx" => (ctx instanceof Dictionary && ctx["uri"] instanceof String) ? ctx["uri"] : null,
+            "shuffle" => st["shuffle_state"] == true,
+            "trackNo" => it["track_number"] instanceof Number ? it["track_number"] : 0,
             "active" => true,
             "playing" => st["is_playing"] == true,
             "title" => it["name"] instanceof String ? it["name"] : "",
@@ -196,20 +213,113 @@ class MusicView extends WatchUi.View {
     // is out on the second connection.
     hidden function loadQueue() as Void {
         var id = _likedId;
-        if (id != null && !id.equals(_queueFor) && !_bgBusy) {
-            _queueFor = id;
+        var now = _now;
+        if (id == null || id.equals(_queueFor) || _bgBusy || now == null) {
+            return;
+        }
+        _queueFor = id;
+        var ctx = now["ctx"];
+        // Shuffle (or radio, no context): only the full queue knows.
+        if (now["shuffle"] == true || !(ctx instanceof String)) {
+            setNext(null);
+            return;
+        }
+        var parts = split(ctx, ":");
+        var kind = parts.size() >= 3 ? parts[parts.size() - 2] : "";
+        var cid = parts[parts.size() - 1];
+        if (kind.equals("album")) {
+            var no = now["trackNo"] instanceof Number ? now["trackNo"] as Number : 0;
             _bgBusy = true;
-            _bg.call(Communications.HTTP_REQUEST_METHOD_GET, "/me/player/queue", null, method(:onQueue));
+            _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
+                "/albums/" + cid + "/tracks?limit=1&offset=" + no + "&market=from_token", null, method(:onNextItem));
+        } else if (kind.equals("playlist")) {
+            // Skipped (or played on) to the song we showed as next: one on.
+            if (ctx.equals(_plUri) && _plIndex >= 0 && id.equals(_expectId)) {
+                _plIndex += 1;
+                fetchPlaylistNext();
+            } else {
+                _plUri = ctx;
+                _plIndex = -1;
+                _plPage = 0;
+                fetchPlaylistIds();
+            }
+        } else {
+            setNext(null);
         }
     }
 
-    function onQueue(code as Number, data as Dictionary or String or Null) as Void {
+    hidden function playlistPath() as String {
+        var parts = split(_plUri as String, ":");
+        return "/playlists/" + parts[parts.size() - 1] + "/items";
+    }
+
+    // One page of the playlist's song ids (~4 KB per 100), to find the
+    // current song's position.
+    hidden function fetchPlaylistIds() as Void {
+        _bgBusy = true;
+        _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
+            playlistPath() + "?fields=items(item(id))&limit=" + PL_PAGE + "&offset=" + (_plPage * PL_PAGE),
+            null, method(:onPlaylistIds));
+    }
+
+    function onPlaylistIds(code as Number, data as Dictionary or String or Null) as Void {
         _bgBusy = false;
+        var items = (code == 200 && data instanceof Dictionary && data["items"] instanceof Array)
+            ? data["items"] as Array : null;
+        data = null;
+        if (items == null) {
+            System.println("playlist ids " + code);
+            setNext(null);
+            return;
+        }
+        var id = _likedId;
+        for (var i = 0; i < items.size(); i++) {
+            var it = items[i];
+            if (it instanceof Dictionary && it["item"] instanceof Dictionary
+                    && id != null && id.equals((it["item"] as Dictionary)["id"])) {
+                _plIndex = _plPage * PL_PAGE + i;
+                fetchPlaylistNext();
+                return;
+            }
+        }
+        if (items.size() == PL_PAGE && _plPage + 1 < PL_MAX_PAGES) {
+            _plPage += 1;
+            fetchPlaylistIds();
+            return;
+        }
+        // Not in the playlist (e.g. a song you queued yourself).
+        setNext(null);
+    }
+
+    // Just the next song: name, id, length, artist names (~120 bytes).
+    hidden function fetchPlaylistNext() as Void {
+        _bgBusy = true;
+        _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
+            playlistPath() + "?fields=items(item(name,id,duration_ms,artists(name)))&limit=1&offset=" + (_plIndex + 1),
+            null, method(:onNextItem));
+    }
+
+    // Playlist answer {items: [{item: track}]}, album answer {items: [track]}.
+    function onNextItem(code as Number, data as Dictionary or String or Null) as Void {
+        _bgBusy = false;
+        var t = null;
+        if (code == 200 && data instanceof Dictionary && data["items"] instanceof Array
+                && (data["items"] as Array).size() > 0 && (data["items"] as Array)[0] instanceof Dictionary) {
+            t = (data["items"] as Array)[0] as Dictionary;
+            if (t["item"] instanceof Dictionary) {
+                t = t["item"] as Dictionary;
+            }
+        } else if (code != 200) {
+            System.println("next song " + code);
+        }
+        data = null;
+        setNext(t);
+    }
+
+    hidden function setNext(t as Dictionary?) as Void {
         _next = null;
         _nextTrack = null;
-        if (code == 200 && data instanceof Dictionary && data["queue"] instanceof Array
-                && (data["queue"] as Array).size() > 0 && (data["queue"] as Array)[0] instanceof Dictionary) {
-            var t = (data["queue"] as Array)[0] as Dictionary;
+        if (t != null) {
             var name = t["name"] instanceof String ? t["name"] as String : "";
             var artist = "";
             if (t["artists"] instanceof Array && (t["artists"] as Array).size() > 0
@@ -224,19 +334,24 @@ class MusicView extends WatchUi.View {
                 "lenMs" => t["duration_ms"] instanceof Number ? t["duration_ms"] : 0,
                 "id" => t["id"]
             };
-            System.println("queue ok: " + _next);
-        } else {
-            System.println("queue " + code);
-            // Try again on a later poll, except when the Edge refused the
-            // answer as too large (-402) or out of memory (-403): the queue
-            // is ~35 KB and that won't change for this song.
-            if (code != -402 && code != -403) {
-                _queueFor = null;
-            }
+            _expectId = t["id"] instanceof String ? t["id"] as String : null;
+            System.println("next ok: " + _next);
         }
-        data = null;
         saveCache();
         WatchUi.requestUpdate();
+    }
+
+    hidden function split(s as String, sep as String) as Array<String> {
+        var out = [] as Array<String>;
+        var rest = s;
+        var i = rest.find(sep);
+        while (i != null) {
+            out.add(rest.substring(0, i) as String);
+            rest = rest.substring(i + sep.length(), rest.length()) as String;
+            i = rest.find(sep);
+        }
+        out.add(rest);
+        return out;
     }
 
     function command(cmd as String) as Void {
