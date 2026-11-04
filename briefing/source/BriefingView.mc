@@ -1,3 +1,4 @@
+import Toybox.Activity;
 import Toybox.Application;
 import Toybox.Graphics;
 import Toybox.Lang;
@@ -12,6 +13,9 @@ import Toybox.WatchUi;
 // shows in the header instead of the update time).
 // The last brief is kept in Storage, so it still shows without the phone.
 class BriefingView extends WatchUi.View {
+    // Speed for the ride time of a route on the Edge (the widget can't see
+    // past rides' average; Fuel + Zone keeps that in its own storage).
+    const ROUTE_KMH = 25.0;
 
     hidden var _brief as Dictionary? = null;
     hidden var _status as String? = "Loading...";
@@ -25,6 +29,10 @@ class BriefingView extends WatchUi.View {
     }
 
     function onShow() as Void {
+        // Whether the Edge reports a loaded route to a widget before the
+        // ride starts (not testable in the simulator).
+        var info = Activity.getActivityInfo();
+        System.println("route: " + (info != null ? info.distanceToDestination : "no info"));
         refresh();
     }
 
@@ -196,8 +204,38 @@ class BriefingView extends WatchUi.View {
         return y + h;
     }
 
-    // Planned ride (when the brief has one) or just the gel rhythm.
+    // Route loaded on the Edge, in km: the distance to the destination the
+    // Edge reports once a course is navigating. null without a route.
+    hidden function routeKm() as Float? {
+        var info = Activity.getActivityInfo();
+        var d = info != null ? info.distanceToDestination : null;
+        return (d != null && d > 0) ? d / 1000.0 : null;
+    }
+
+    // Planned ride: the route on the Edge first, else the brief's plan from
+    // the calendar, else just the gel rhythm.
     hidden function drawPlan(dc as Dc, b as Dictionary, y as Number, w as Number, h as Number) as Number {
+        var km = routeKm();
+        if (km != null) {
+            // Same rule as Fuel + Zone (FuelState.mc): 30 g gels; under 1 h
+            // none, 1-2 h 30 g/h, 2 h+ 60 g/h. Time at ROUTE_KMH.
+            var min = (km / ROUTE_KMH * 60).toNumber();
+            var rate = min < 60 ? 0 : (min < 120 ? 30 : 60);
+            var carbs = rate * min / 60;
+            var gels = (carbs + 29) / 30;
+            var vy0 = y + 6 + dc.getFontHeight(Graphics.FONT_XTINY);
+            Ui.label(dc, Ui.PAD, y + 6, "ROUTE ON THE EDGE");
+            dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(Ui.PAD, vy0, Graphics.FONT_SMALL,
+                km.format("%.0f") + " km - ~" + (min / 60) + ":" + (min % 60).format("%02d") + " h", Graphics.TEXT_JUSTIFY_LEFT);
+            dc.setColor(Ui.MUTED, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(w - Ui.PAD, y + 6, Graphics.FONT_XTINY, "FUEL", Graphics.TEXT_JUSTIFY_RIGHT);
+            dc.setColor(Ui.INK, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(w - Ui.PAD, vy0, Graphics.FONT_SMALL,
+                rate == 0 ? "no gels" : gels + " gels - " + carbs + " g", Graphics.TEXT_JUSTIFY_RIGHT);
+            Ui.hline(dc, y + h - 1, w);
+            return y + h;
+        }
         var plan = b["plan"];
         var fuel = b["fuel"];
         var every = (fuel instanceof Dictionary && fuel["everyMin"] instanceof Number) ? fuel["everyMin"] : 40;
