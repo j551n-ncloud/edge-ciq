@@ -33,6 +33,11 @@ class MusicView extends WatchUi.View {
     hidden var _inFlight as Boolean = false;
     hidden var _poll as Timer.Timer = new Timer.Timer();
     hidden var _settle as Timer.Timer = new Timer.Timer();
+    // The queue (for "up next") is ~35 KB against ~3 KB for the player, so
+    // it's only asked once a song has played QUEUE_DELAY_MS: skipping through
+    // several songs doesn't load a queue for each one.
+    const QUEUE_DELAY_MS = 4000;
+    hidden var _queueTimer as Timer.Timer = new Timer.Timer();
     hidden var _sp as Spotify = new Spotify();
     // Second connection for the liked check and the queue, so the large
     // queue answer never blocks the buttons or the poll.
@@ -72,6 +77,7 @@ class MusicView extends WatchUi.View {
     function onHide() as Void {
         _poll.stop();
         _settle.stop();
+        _queueTimer.stop();
     }
 
     // --- Spotify -------------------------------------------------------------
@@ -100,6 +106,8 @@ class MusicView extends WatchUi.View {
                 _bgBusy = true;
                 _bg.call(Communications.HTTP_REQUEST_METHOD_GET,
                     "/me/library/contains?uris=spotify%3Atrack%3A" + id, null, method(:onLiked));
+                _queueTimer.stop();
+                _queueTimer.start(method(:loadQueue), QUEUE_DELAY_MS, false);
             }
             if (was == null || was["playing"] != (_now as Dictionary)["playing"]) {
                 saveCache();
@@ -149,15 +157,24 @@ class MusicView extends WatchUi.View {
         } else {
             System.println("liked check " + code + ": " + data);
         }
-        // Then the next track, once per song (the queue answer is large).
-        var id = _likedId;
-        if (id != null && !id.equals(_queueFor)) {
-            _queueFor = id;
-            _bgBusy = true;
-            _bg.call(Communications.HTTP_REQUEST_METHOD_GET, "/me/player/queue", null, method(:onQueue));
-        }
         saveCache();
         WatchUi.requestUpdate();
+    }
+
+    // Up next for the song that's still playing after QUEUE_DELAY_MS.
+    function loadQueue() as Void {
+        var id = _likedId;
+        if (id == null || id.equals(_queueFor)) {
+            return;
+        }
+        if (_bgBusy) {
+            // The liked check is still out; try again shortly.
+            _queueTimer.start(method(:loadQueue), 1000, false);
+            return;
+        }
+        _queueFor = id;
+        _bgBusy = true;
+        _bg.call(Communications.HTTP_REQUEST_METHOD_GET, "/me/player/queue", null, method(:onQueue));
     }
 
     function onQueue(code as Number, data as Dictionary or String or Null) as Void {
