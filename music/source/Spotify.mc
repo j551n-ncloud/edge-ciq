@@ -9,6 +9,25 @@ import Toybox.Time;
 // secrets-spotify/spotify.xml (scripts/spotify-login.py, never committed).
 // The access token lives an hour and is kept in Storage; a rotated refresh
 // token too. One request at a time: the view waits for the callback.
+// Phone link trouble (queue full, no connection, timeouts) pauses all
+// requests until this System timer value: requests piling up on a stalled
+// Bluetooth link came right before the Edge's sync service crashed.
+var linkQuietUntil as Number = 0;
+const LINK_QUIET_MS = 30000;
+
+function linkTrouble(code as Number) as Boolean {
+    if (code == -101 || code == -104 || code == -2 || code == -300) {
+        linkQuietUntil = System.getTimer() + LINK_QUIET_MS;
+        System.println("link trouble " + code + ", quiet 30 s");
+        return true;
+    }
+    return false;
+}
+
+function linkQuiet() as Boolean {
+    return System.getTimer() < linkQuietUntil;
+}
+
 class Spotify {
     const API = "https://api.spotify.com/v1";
 
@@ -64,6 +83,7 @@ class Spotify {
     }
 
     function onResp(code as Number, data as Dictionary or String or Null) as Void {
+        linkTrouble(code);
         if (code != 200 && code != 204) {
             System.println("spotify " + (_pending as Array)[1] + " " + code);
         }
@@ -113,6 +133,7 @@ class Spotify {
     }
 
     function onToken(code as Number, data as Dictionary or String or Null) as Void {
+        linkTrouble(code);
         System.println("spotify token " + (_form ? "form" : "basic") + " " + code
             + (code == 200 ? "" : ": " + data));
         if (code == 200 && data instanceof Dictionary && data["access_token"] instanceof String) {

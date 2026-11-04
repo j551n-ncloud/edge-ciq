@@ -109,7 +109,9 @@ class MusicView extends WatchUi.View {
 
     function refresh() as Void {
         unstick();
-        if (!_busy && !_inFlight) {
+        // One request at a time (the liked/up-next line included), and none
+        // while the phone link is in trouble.
+        if (!_busy && !_inFlight && !_bgBusy && !linkQuiet()) {
             _inFlight = true;
             _sentAt = System.getTimer();
             _sp.call(Communications.HTTP_REQUEST_METHOD_GET, PLAYER, null, method(:onPlayer));
@@ -160,7 +162,7 @@ class MusicView extends WatchUi.View {
             _now = {"active" => false};
             _status = null;
         } else {
-            _status = Spotify.errorText(code, data);
+            _status = linkQuiet() ? "Phone link busy, waiting" : Spotify.errorText(code, data);
             System.println("music error " + code + ": " + _status);
         }
         WatchUi.requestUpdate();
@@ -454,6 +456,7 @@ class MusicView extends WatchUi.View {
             _inFlight = false;
             _busy = false;
             _status = "No answer from phone";
+            linkQuietUntil = System.getTimer() + LINK_QUIET_MS;
         }
     }
 
