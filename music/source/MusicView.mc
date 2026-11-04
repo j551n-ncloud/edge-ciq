@@ -34,6 +34,11 @@ class MusicView extends WatchUi.View {
     // phone link plus the 5 s poll would otherwise queue requests until the
     // Edge rejects them).
     hidden var _inFlight as Boolean = false;
+    // When the request in flight went out. A request the phone never
+    // answers (Bluetooth link disturbed) would otherwise block every tap
+    // with "Busy" until the widget is reopened.
+    const STUCK_MS = 15000;
+    hidden var _sentAt as Number = 0;
     hidden var _poll as Timer.Timer = new Timer.Timer();
     hidden var _settle as Timer.Timer = new Timer.Timer();
     hidden var _sp as Spotify = new Spotify();
@@ -80,8 +85,10 @@ class MusicView extends WatchUi.View {
     // --- Spotify -------------------------------------------------------------
 
     function refresh() as Void {
+        unstick();
         if (!_busy && !_inFlight) {
             _inFlight = true;
+            _sentAt = System.getTimer();
             _sp.call(Communications.HTTP_REQUEST_METHOD_GET, PLAYER, null, method(:onPlayer));
         }
     }
@@ -186,6 +193,7 @@ class MusicView extends WatchUi.View {
     }
 
     function command(cmd as String) as Void {
+        unstick();
         if (_inFlight) {
             _status = "Busy, try again";
             WatchUi.requestUpdate();
@@ -216,6 +224,7 @@ class MusicView extends WatchUi.View {
         }
         _busy = true;
         _inFlight = true;
+        _sentAt = System.getTimer();
         _status = "...";
         WatchUi.requestUpdate();
         _lastToggle = path.equals("/me/player/pause") || path.equals("/me/player/play") ? path : null;
@@ -235,6 +244,7 @@ class MusicView extends WatchUi.View {
                 now["playing"] = other.equals("/me/player/play");
             }
             _inFlight = true;
+            _sentAt = System.getTimer();
             _sp.call(Communications.HTTP_REQUEST_METHOD_PUT, other, {}, method(:onCmd));
             return;
         }
@@ -252,6 +262,16 @@ class MusicView extends WatchUi.View {
             _likedId = null;
         }
         WatchUi.requestUpdate();
+    }
+
+    // Gives up on a request that's been out longer than STUCK_MS.
+    hidden function unstick() as Void {
+        if (_inFlight && System.getTimer() - _sentAt > STUCK_MS) {
+            System.println("music: no answer after " + STUCK_MS + " ms");
+            _inFlight = false;
+            _busy = false;
+            _status = "No answer from phone";
+        }
     }
 
     function afterCmd() as Void {
