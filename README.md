@@ -74,6 +74,13 @@ WiFi on the bike; without the phone the brief shows the last saved copy.
 
 - **Ride Brief:** readiness ring and reasons, weather and dark-from, packing
   list, gel plan, bike status (`GET /garmin-api/edge-brief`). Tap refreshes.
+  A course loaded on the Edge wins over the calendar plan: the Edge reports
+  its distance to the widget before the start, ride time at 25 km/h, gels by
+  the Fuel + Zone rule (grams in the label). Setting `demoMode` shows sample
+  data in the simulator.
+- **Dark mode** (both widgets): white on black from sunset to sunrise at the
+  phone's weather location, 19:00 to 07:00 when that's unknown (widgets
+  can't read the Edge's own night mode).
 - **Music:** Spotify previous / play-pause / next and like, straight to the
   Spotify Web API through the phone (`music/source/Spotify.mc`), no proxy.
   Polls `/me/player?market=from_token` every 5 s while shown (the market
@@ -88,7 +95,10 @@ WiFi on the bike; without the phone the brief shows the last saved copy.
   parameter: the iPhone's Garmin Connect app otherwise answered repeated
   requests from its cache (a song several skips old). No volume (the iPhone has
   no remote volume), no shuffle/repeat (Spotify disallows toggling them for
-  this account). Needs Spotify Premium.
+  this account). Needs Spotify Premium. One request at a time; after
+  phone link trouble (-101 queue full, -104, -2, -300, or no answer in 15 s)
+  it pauses 30 s: piled-up requests on a stalled link came right before the
+  Edge's sync service crashed (`GARMIN/Debugging`, "SYC main").
 
   Its own Spotify login, separate from glance's: add
   `http://127.0.0.1:8888/callback` as a redirect URI of the Spotify app
