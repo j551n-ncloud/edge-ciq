@@ -13,7 +13,6 @@ import Toybox.WatchUi;
 // Polls now-playing every 5 s while the widget is on screen.
 class MusicView extends WatchUi.View {
     const POLL_MS = 5000;
-    const BELL_MS = 1500;
     const GAP = 8;
 
     hidden var _now as Dictionary? = null;
@@ -23,9 +22,7 @@ class MusicView extends WatchUi.View {
     // phone link plus the 5 s poll would otherwise queue requests until the
     // Edge rejects them).
     hidden var _inFlight as Boolean = false;
-    hidden var _bellUntil as Number = 0;
     hidden var _poll as Timer.Timer = new Timer.Timer();
-    hidden var _bellTimer as Timer.Timer = new Timer.Timer();
     // [x, y, w, h, cmd] per button, rebuilt on every draw.
     hidden var _buttons as Array<Array> = [] as Array<Array>;
 
@@ -89,16 +86,6 @@ class MusicView extends WatchUi.View {
         }
     }
 
-    function ringBell() as Void {
-        System.println("bell: " + Bell.ring());
-        _bellUntil = System.getTimer() + BELL_MS;
-        _bellTimer.start(method(:redraw), BELL_MS + 50, false);
-        WatchUi.requestUpdate();
-    }
-
-    function redraw() as Void {
-        WatchUi.requestUpdate();
-    }
 
     // --- Drawing -----------------------------------------------------------------
 
@@ -180,18 +167,15 @@ class MusicView extends WatchUi.View {
         var liked = active && now["liked"] == true;
         textButton(dc, pad, y, w - 2 * pad, rh, liked, Ui.FUEL, liked ? "unlike" : "like", liked ? "LIKED" : "LIKE");
 
-        // Footer: status or the double-tap hint
+        // Footer: status or a hint
         y += hR;
         Ui.hline(dc, y, w);
         var st = _status;
         dc.setColor(st != null ? Ui.WARN : Ui.MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(w / 2, y + (h - y) / 2, Graphics.FONT_XTINY,
-            Ui.fit(dc, st != null ? st : "Double-tap: bell", Graphics.FONT_XTINY, w - 2 * pad),
+            Ui.fit(dc, st != null ? st : "Tap a button", Graphics.FONT_XTINY, w - 2 * pad),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
-        if (System.getTimer() < _bellUntil) {
-            Ui.bellBanner(dc);
-        }
     }
 
     hidden function button(dc as Dc, x as Number, y as Number, bw as Number, bh as Number,

@@ -2,7 +2,7 @@ import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.System;
 
-// Drawing helpers and the double-tap rule shared by the widgets.
+// Drawing helpers shared by the widgets.
 module Ui {
     const PAD = 12;
     const INK = 0x000000;
@@ -12,9 +12,7 @@ module Ui {
     const FUEL = 0xFF5500;
     const OK = 0x00AA00;
     const WARN = 0xAA5500;
-    const BELL = 0xFFAA00;
-    // A second tap within this window = bell; single taps wait this long.
-    const DOUBLE_TAP_MS = 300;
+    const AMBER = 0xFFAA00;
 
     function label(dc as Dc, x as Number, y as Number, text as String) as Void {
         dc.setColor(MUTED, Graphics.COLOR_TRANSPARENT);
@@ -38,17 +36,6 @@ module Ui {
         return s + "...";
     }
 
-    // Amber "BELL" band over the bottom of the screen.
-    function bellBanner(dc as Dc) as Void {
-        var w = dc.getWidth();
-        var h = dc.getHeight();
-        var bh = h / 6;
-        dc.setColor(BELL, BELL);
-        dc.fillRectangle(0, h - bh, w, bh);
-        dc.setColor(INK, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(w / 2, h - bh / 2, Graphics.FONT_LARGE, "BELL",
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-    }
 
     // "1:42" from milliseconds.
     function mmss(ms as Number) as String {

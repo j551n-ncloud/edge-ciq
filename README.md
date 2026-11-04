@@ -8,7 +8,7 @@ the "Edge 1030 Plus Interface" canvas on claude.ai.
 | `fuelzone/` | data field, full screen | ride screen, gel alert, bell; on the Edge |
 | `briefing/` | widget "Ride Brief" | on the Edge (enable it in the widget loop) |
 | `music/` | widget "Music" | on the Edge (enable it in the widget loop) |
-| `shared/` | code | `bell/` for all apps, `widget/` (proxy calls, drawing) for the widgets |
+| `shared/` | code | `bell/` for the ride screen, `widget/` (proxy calls, drawing) for the widgets |
 
 ## fuelzone
 
@@ -52,7 +52,6 @@ Swipe down on the Edge to reach them. Sideloaded widgets start switched off:
 enable them under Menu > Settings > System > Widgets. They call the glance proxy through
 the phone (Garmin Connect app over Bluetooth, the phone's mobile data), so no
 WiFi on the bike; without the phone the brief shows the last saved copy.
-Double-tap anywhere = bell, single taps wait 300 ms to rule that out.
 
 - **Ride Brief:** readiness ring and reasons, weather and dark-from, packing
   list, gel plan, bike status (`GET /garmin-api/edge-brief`). Tap refreshes.

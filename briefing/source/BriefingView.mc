@@ -10,12 +10,9 @@ import Toybox.WatchUi;
 //   header 34 | readiness 124 | weather 62 | pack 76 | plan/fuel 52 | bike 40 | footer
 // The last brief is kept in Storage, so it still shows without the phone.
 class BriefingView extends WatchUi.View {
-    const BELL_MS = 1500;
 
     hidden var _brief as Dictionary? = null;
     hidden var _status as String? = "Loading...";
-    hidden var _bellUntil as Number = 0;
-    hidden var _bellTimer as Timer.Timer = new Timer.Timer();
 
     function initialize() {
         View.initialize();
@@ -47,16 +44,6 @@ class BriefingView extends WatchUi.View {
         WatchUi.requestUpdate();
     }
 
-    function ringBell() as Void {
-        System.println("bell: " + Bell.ring());
-        _bellUntil = System.getTimer() + BELL_MS;
-        _bellTimer.start(method(:redraw), BELL_MS + 50, false);
-        WatchUi.requestUpdate();
-    }
-
-    function redraw() as Void {
-        WatchUi.requestUpdate();
-    }
 
     // --- Drawing -----------------------------------------------------------------
 
@@ -96,12 +83,9 @@ class BriefingView extends WatchUi.View {
         var fy = y + (h - y) / 2;
         dc.setColor(st != null ? Ui.WARN : Ui.MUTED, Graphics.COLOR_TRANSPARENT);
         dc.drawText(w / 2, fy, Graphics.FONT_XTINY,
-            Ui.fit(dc, st != null ? st : "Tap: refresh - double-tap: bell", Graphics.FONT_XTINY, w - 2 * pad),
+            Ui.fit(dc, st != null ? st : "Tap to refresh", Graphics.FONT_XTINY, w - 2 * pad),
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
-        if (System.getTimer() < _bellUntil) {
-            Ui.bellBanner(dc);
-        }
     }
 
     hidden function drawReadiness(dc as Dc, b as Dictionary, y as Number, w as Number, h as Number) as Number {
@@ -110,7 +94,7 @@ class BriefingView extends WatchUi.View {
             var score = r["score"] instanceof Number ? r["score"] as Number : 0;
             var cx = Ui.PAD + 42;
             var cy = y + h / 2;
-            var ringColor = score >= 70 ? Ui.OK : (score >= 45 ? Ui.BELL : 0xFF0000);
+            var ringColor = score >= 70 ? Ui.OK : (score >= 45 ? Ui.AMBER : 0xFF0000);
             dc.setPenWidth(8);
             dc.setColor(Ui.LINE, Graphics.COLOR_TRANSPARENT);
             dc.drawCircle(cx, cy, 36);
