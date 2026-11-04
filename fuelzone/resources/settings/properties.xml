@@ -7,6 +7,7 @@
         <property id="plannedMinutes" type="number">0</property>
         <property id="hrZones" type="string">127,158,174,189</property>
         <property id="bellOnDoubleLap" type="boolean">true</property>
+        <property id="liveTracking" type="boolean">true</property>
         <!-- Simulator only: plays a fake ride (DemoFeed.mc). No setting UI. -->
         <property id="demoMode" type="boolean">false</property>
     </properties>
@@ -31,6 +32,9 @@
             <settingConfig type="alphaNumeric"/>
         </setting>
         <setting propertyKey="@Properties.bellOnDoubleLap" title="@Strings.SetBell">
+            <settingConfig type="boolean"/>
+        </setting>
+        <setting propertyKey="@Properties.liveTracking" title="@Strings.SetLive">
             <settingConfig type="boolean"/>
         </setting>
     </settings>

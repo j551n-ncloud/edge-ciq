@@ -1,2 +1,4 @@
 project.manifest = manifest.xml
 base.sourcePath = source;../shared/bell
+# secrets/edge.xml: proxy URL + EDGE_API_TOKEN for the live-ride sender
+base.resourcePath = resources;../secrets

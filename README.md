@@ -32,13 +32,19 @@ One full-screen data field (put it on a 1-field data page):
   triggers. Not a legal replacement for a mechanical bell (StVZO §64a), and silent if device tones are off.
 - **FIT fields** `carbs` (g) and `gels` on the session, so they show on the
   ride in Garmin Connect.
+- **Live ride:** every 30 s the field saves a snapshot (position, distance,
+  ride time, HR and zone, gels, carbs, ascent, speed); a background sender
+  (`LiveService`, 5 min minimum interval) posts the latest one through the phone
+  to glance `/garmin-api/live`. glance alerts started / stopped 15+ min /
+  finished in Telegram, claude-telegram reads it via `get_live_ride`. About
+  60 KB per hour. Setting `liveTracking`.
 - Gel state survives an app restart mid-ride (`Application.Storage`), and is
   cleared when the ride is saved or discarded.
 
 Settings (Garmin Connect app → device → Connect IQ apps → Fuel + Zone; sideloaded
 apps may not show them, then change the defaults in `resources/settings/properties.xml`):
 `gelIntervalMin`, `gelGrams`, `carbsPerHour`, `plannedGels`,
-`plannedMinutes`, `hrZones`, `bellOnDoubleLap`.
+`plannedMinutes`, `hrZones`, `bellOnDoubleLap`, `liveTracking`.
 
 ## Widgets
 

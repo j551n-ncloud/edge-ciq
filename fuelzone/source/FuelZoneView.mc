@@ -1,10 +1,12 @@
 import Toybox.Activity;
 import Toybox.Application;
 import Toybox.Attention;
+import Toybox.Background;
 import Toybox.FitContributor;
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.System;
+import Toybox.Time;
 import Toybox.WatchUi;
 
 // Full-screen ride layout (use it in a 1-field data page). Bands follow the
@@ -17,10 +19,15 @@ class FuelZoneView extends WatchUi.DataField {
     // Two lap presses within this window ring the bell.
     const DOUBLE_LAP_MS = 2500;
     const BELL_BANNER_MS = 2000;
+    // How often the ride screen refreshes the live-ride snapshot in Storage
+    // (the background sender posts the latest one every 5 min).
+    const SNAP_MS = 30000;
 
     hidden var _fuel as FuelState;
     hidden var _zones as Zones;
     hidden var _demo as Boolean = false;
+    hidden var _liveOn as Boolean = true;
+    hidden var _lastSnapAt as Number = -SNAP_MS;
     // Starts above any demo timer so the first sample sets up the demo ride.
     hidden var _demoTimer as Number = 0x7FFFFFFF;
     hidden var _bellOnDoubleLap as Boolean = true;
@@ -72,6 +79,7 @@ class FuelZoneView extends WatchUi.DataField {
             numProp("carbsPerHour", 60), numProp("plannedGels", 0), numProp("plannedMinutes", 0));
         _zones.load(strProp("hrZones", ""));
         _bellOnDoubleLap = boolProp("bellOnDoubleLap", true);
+        _liveOn = boolProp("liveTracking", true);
         _demo = boolProp("demoMode", false);
     }
 
@@ -121,6 +129,12 @@ class FuelZoneView extends WatchUi.DataField {
             raiseGelAlert();
             save();
         }
+        // Live ride: refresh the snapshot the background sender posts.
+        if (!_demo && _liveOn && Application.Storage.getValue("liveId") != null
+                && System.getTimer() - _lastSnapAt >= SNAP_MS) {
+            saveSnapshot(info, running ? "ride" : "paused");
+        }
+
         // The alert's 3 s countdown ran out: log the gel.
         if (running && _fuel.tick(_timer)) {
             save();
@@ -148,12 +162,71 @@ class FuelZoneView extends WatchUi.DataField {
         _lastLapAt = now;
     }
 
+    function onTimerStart() as Void {
+        startLive();
+    }
+
+    function onTimerResume() as Void {
+        startLive();
+    }
+
     // Called when the ride is saved or discarded.
     function onTimerReset() as Void {
+        stopLive();
         _fuel.reset();
         _pow = [] as Array<Number>;
         _hasPower = false;
         save();
+    }
+
+    // --- Live ride --------------------------------------------------------------
+
+    // New ride id on the first start, and the 5 min background sender.
+    hidden function startLive() as Void {
+        if (!_liveOn || !(Toybox has :Background)) {
+            return;
+        }
+        if (Application.Storage.getValue("liveId") == null) {
+            Application.Storage.setValue("liveId", Time.now().value());
+        }
+        if (Background.getTemporalEventRegisteredTime() == null) {
+            Background.registerForTemporalEvent(new Time.Duration(300));
+        }
+    }
+
+    // Last snapshot marked done, sender off. The proxy also ends a ride after
+    // 20 min of silence, since a background post after the ride is not certain.
+    hidden function stopLive() as Void {
+        if (Application.Storage.getValue("liveId") != null) {
+            saveSnapshot(null, "done");
+        }
+        if (Toybox has :Background) {
+            Background.deleteTemporalEvent();
+        }
+        Application.Storage.deleteValue("liveId");
+    }
+
+    hidden function saveSnapshot(info as Activity.Info?, st as String) as Void {
+        var snap = {
+            "id" => Application.Storage.getValue("liveId"),
+            "t" => _timer,
+            "st" => st,
+            "d" => _dist == null ? 0 : (_dist as Float).toNumber(),
+            "hr" => _hr,
+            "z" => _hr == null ? null : _zones.zoneFor(_hr as Number),
+            "g" => _fuel.gelsTaken,
+            "c" => _fuel.carbsTaken(),
+            "asc" => _ascent,
+            "spd" => _speed == null ? null : ((_speed as Float) * 3.6).toNumber()
+        };
+        var loc = info != null ? info.currentLocation : null;
+        if (loc != null) {
+            var deg = loc.toDegrees();
+            snap["lat"] = deg[0].toFloat();
+            snap["lon"] = deg[1].toFloat();
+        }
+        Application.Storage.setValue("live", snap);
+        _lastSnapAt = System.getTimer();
     }
 
     // --- Drawing --------------------------------------------------------------

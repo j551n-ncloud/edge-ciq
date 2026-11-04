@@ -7,4 +7,5 @@
     <string id="SetPlannedMinutes">Planned ride time in min (0 = open)</string>
     <string id="SetHrZones">HR zone upper limits Z1-Z4, e.g. 127,158,174,189 (empty = device profile)</string>
     <string id="SetBell">Bell on double Lap press</string>
+    <string id="SetLive">Live ride to the proxy every 5 min</string>
 </strings>

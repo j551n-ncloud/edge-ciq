@@ -6,6 +6,8 @@
             <iq:product id="edge1030plus"/>
         </iq:products>
         <iq:permissions>
+            <iq:uses-permission id="Background"/>
+            <iq:uses-permission id="Communications"/>
             <iq:uses-permission id="FitContributor"/>
             <iq:uses-permission id="UserProfile"/>
         </iq:permissions>
