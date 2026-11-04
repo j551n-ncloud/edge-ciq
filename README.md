@@ -5,7 +5,7 @@ the "Edge 1030 Plus Interface" canvas on claude.ai.
 
 ![The four screens: Fuel + Zone ride page, gel alert, Ride Brief and Music widgets](docs/overview.png)
 
-_Renders of the design canvas (282 x 470, the Edge 1030 Plus screen), with sample data. Single screens in [`docs/`](docs/)._
+_Renders of the design canvas (282 x 470, the Edge 1030 Plus screen), with sample data, rendered with headless Edge/Chrome and the canvas's own runtime. Single screens in [`docs/`](docs/)._
 
 | App | Type | Status |
 |---|---|---|
