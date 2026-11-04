@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<iq:manifest version="3" xmlns:iq="http://www.garmin.com/xml/connectiq">
+    <!-- Experiment: can the Edge see the iPhone over Bluetooth LE (for Apple
+         Media Service music control)? Scans and lists, connects to nothing. -->
+    <iq:application id="f6e6efef79a749dfb1268637f0c3d6bd" type="widget" name="@Strings.AppName" entry="BleScanApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="3.1.0">
+        <iq:products>
+            <iq:product id="edge1030plus"/>
+        </iq:products>
+        <iq:permissions>
+            <iq:uses-permission id="BluetoothLowEnergy"/>
+        </iq:permissions>
+        <iq:languages>
+            <iq:language>eng</iq:language>
+        </iq:languages>
+        <iq:barrels/>
+    </iq:application>
+</iq:manifest>
