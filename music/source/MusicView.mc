@@ -104,8 +104,10 @@ class MusicView extends WatchUi.View {
             if (was == null || was["playing"] != (_now as Dictionary)["playing"]) {
                 saveCache();
             }
-        } else if (code == 200 || code == 204) {
-            // Nothing playing on any device.
+        } else if (code == 200 || code == 204 || code == 0) {
+            // Nothing playing on any device: Spotify answers 204 with an
+            // empty body, which arrives as 0 through the iPhone (204 in the
+            // simulator). Link problems have their own negative codes.
             _now = {"active" => false};
             _status = null;
         } else {
