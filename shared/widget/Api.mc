@@ -37,8 +37,16 @@ module Api {
         }, cb);
     }
 
-    // Short, rider-readable text for a failed request.
+    // Short, rider-readable text for a failed request. Negative codes are the
+    // Edge's own (Communications docs): -104 no phone, -2/-300 link timeout,
+    // -101 too many requests queued, -402 response too large.
     function errorText(code as Number, data) as String {
+        if (code == -101) {
+            return "Too many requests";
+        }
+        if (code == -402 || code == -403) {
+            return "Answer too large";
+        }
         if (code == -104 || code == -2 || code == -300) {
             return "Phone not connected";
         }

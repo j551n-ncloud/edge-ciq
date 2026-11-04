@@ -42,6 +42,7 @@ class BriefingView extends WatchUi.View {
             Application.Storage.setValue("brief", data);
         } else {
             _status = Api.errorText(code, data) + (_brief != null ? " (old data)" : "");
+            System.println("brief error " + code + ": " + _status);
         }
         WatchUi.requestUpdate();
     }

@@ -19,6 +19,10 @@ class MusicView extends WatchUi.View {
     hidden var _now as Dictionary? = null;
     hidden var _status as String? = "Loading...";
     hidden var _busy as Boolean = false;
+    // A request is out over Bluetooth; don't stack another one on it (a slow
+    // phone link plus the 5 s poll would otherwise queue requests until the
+    // Edge rejects them).
+    hidden var _inFlight as Boolean = false;
     hidden var _bellUntil as Number = 0;
     hidden var _poll as Timer.Timer = new Timer.Timer();
     hidden var _bellTimer as Timer.Timer = new Timer.Timer();
@@ -41,24 +45,33 @@ class MusicView extends WatchUi.View {
     // --- Proxy ------------------------------------------------------------------
 
     function refresh() as Void {
-        if (!_busy) {
+        if (!_busy && !_inFlight) {
+            _inFlight = true;
             Api.get("/music-api/now", method(:onNow));
         }
     }
 
     function onNow(code as Number, data as Dictionary or String or Null) as Void {
         _busy = false;
+        _inFlight = false;
         if (code == 200 && data instanceof Dictionary) {
             _now = data;
             _status = null;
         } else {
             _status = Api.errorText(code, data);
+            System.println("music error " + code + ": " + _status);
         }
         WatchUi.requestUpdate();
     }
 
     function command(cmd as String) as Void {
+        if (_inFlight) {
+            _status = "Busy, try again";
+            WatchUi.requestUpdate();
+            return;
+        }
         _busy = true;
+        _inFlight = true;
         _status = "...";
         WatchUi.requestUpdate();
         Api.post("/music-api/cmd", {"cmd" => cmd}, method(:onNow));
