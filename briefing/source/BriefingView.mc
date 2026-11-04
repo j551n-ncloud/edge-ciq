@@ -56,6 +56,7 @@ class BriefingView extends WatchUi.View {
     // --- Drawing -----------------------------------------------------------------
 
     function onUpdate(dc as Dc) as Void {
+        Ui.applyTheme();
         var w = dc.getWidth();
         var h = dc.getHeight();
         var s = h / 470.0;

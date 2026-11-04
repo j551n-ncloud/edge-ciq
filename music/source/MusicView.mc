@@ -478,6 +478,7 @@ class MusicView extends WatchUi.View {
     // --- Drawing -----------------------------------------------------------------
 
     function onUpdate(dc as Dc) as Void {
+        Ui.applyTheme();
         var w = dc.getWidth();
         var h = dc.getHeight();
         var s = h / 470.0;
@@ -588,7 +589,8 @@ class MusicView extends WatchUi.View {
     hidden function textButton(dc as Dc, x as Number, y as Number, bw as Number, bh as Number,
                                on as Boolean, onColor as Number, cmd as String, text as String) as Void {
         button(dc, x, y, bw, bh, on, on ? onColor : Ui.LINE, cmd);
-        dc.setColor(on ? (onColor == Ui.INK ? Ui.PAPER : Ui.INK) : Ui.INK, Graphics.COLOR_TRANSPARENT);
+        // Black on the orange "liked" in both themes.
+        dc.setColor(on ? (onColor == Ui.INK ? Ui.PAPER : 0x000000) : Ui.INK, Graphics.COLOR_TRANSPARENT);
         dc.drawText(x + bw / 2, y + bh / 2, Graphics.FONT_SMALL, text,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
