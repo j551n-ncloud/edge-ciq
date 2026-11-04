@@ -16,7 +16,7 @@ import Toybox.WatchUi;
 class MusicView extends WatchUi.View {
     const POLL_MS = 5000;
     // Spotify applies commands asynchronously; read back after this.
-    const SETTLE_MS = 600;
+    const SETTLE_MS = 1000;
     const GAP = 8;
     // market=from_token drops the per-track country lists, by far the
     // largest part of the answer.

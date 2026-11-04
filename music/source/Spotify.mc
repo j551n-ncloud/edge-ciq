@@ -49,7 +49,14 @@ class Spotify {
         if (m == Communications.HTTP_REQUEST_METHOD_PUT || m == Communications.HTTP_REQUEST_METHOD_POST) {
             headers["Content-Type"] = Communications.REQUEST_CONTENT_TYPE_JSON;
         }
-        Communications.makeWebRequest(API + (p[1] as String), p[2], {
+        // A changing parameter on every GET: the Garmin Connect app on the
+        // iPhone can answer a repeated identical request from its cache,
+        // which showed a song from several skips ago. Spotify ignores it.
+        var path = p[1] as String;
+        if (m == Communications.HTTP_REQUEST_METHOD_GET) {
+            path += (path.find("?") == null ? "?" : "&") + "_=" + System.getTimer();
+        }
+        Communications.makeWebRequest(API + path, p[2], {
             :method => m as Communications.HttpRequestMethod,
             :headers => headers,
             :responseType => Communications.HTTP_RESPONSE_CONTENT_TYPE_JSON
