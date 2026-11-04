@@ -1,0 +1,4 @@
+bin/
+developer_key.*
+secrets/
+.DS_Store

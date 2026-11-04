@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<iq:manifest version="3" xmlns:iq="http://www.garmin.com/xml/connectiq">
+    <!-- minApiLevel 3.2.0: DataField.showAlert (the full-screen gel alert). -->
+    <iq:application id="83543292d8f84fd8a16ba5cb769b0614" type="datafield" name="@Strings.AppName" entry="FuelZoneApp" launcherIcon="@Drawables.LauncherIcon" minApiLevel="3.2.0">
+        <iq:products>
+            <iq:product id="edge1030plus"/>
+        </iq:products>
+        <iq:permissions>
+            <iq:uses-permission id="FitContributor"/>
+            <iq:uses-permission id="UserProfile"/>
+        </iq:permissions>
+        <iq:languages>
+            <iq:language>eng</iq:language>
+        </iq:languages>
+        <iq:barrels/>
+    </iq:application>
+</iq:manifest>
