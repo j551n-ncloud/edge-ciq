@@ -25,6 +25,7 @@ class ScanDelegate extends BluetoothLowEnergy.BleDelegate {
     }
 
     function onConnectedStateChanged(device as BluetoothLowEnergy.Device, state as BluetoothLowEnergy.ConnectionState) as Void {
+        _view.connectedState(state == BluetoothLowEnergy.CONNECTION_STATE_CONNECTED);
         if (state == BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
             var svcs = "";
             var it = device.getServices();

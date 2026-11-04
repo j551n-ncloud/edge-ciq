@@ -2,6 +2,7 @@ import Toybox.BluetoothLowEnergy;
 import Toybox.Graphics;
 import Toybox.Lang;
 import Toybox.System;
+import Toybox.Timer;
 import Toybox.WatchUi;
 
 // Experiment for iPhone music control over Apple Media Service (Ams.mc).
@@ -9,15 +10,20 @@ import Toybox.WatchUi;
 // Apple's company id 0x004C), strongest first; every new device goes to the
 // log (GARMIN/Apps/LOGS/BLESCAN.TXT) with its raw advertising data.
 // Step 2: tap one to connect and pair; with AMS found, the button at the
-// bottom sends play/pause to the phone.
+// bottom sends play/pause to the phone. Only iPhone-like entries (Nearby
+// 0x10, Handoff 0x0C) are offered, and a connect attempt is given up after
+// CONNECT_MS: a hanging one blocked the Edge's link to the phone.
 class BleScanView extends WatchUi.View {
     const MAX = 40;
+    const CONNECT_MS = 10000;
+    hidden var _connTimer as Timer.Timer = new Timer.Timer();
+    hidden var _connected as Boolean = false;
     const AMS = "89D3502B-0F36-433A-8EF4-C502AD55F8DC";
 
     // [ScanResult, name, rssi, apple, ams, appleType]
     hidden var _devs as Array<Array> = [] as Array<Array>;
     hidden var _state as String = "starting";
-    hidden var _note as String = "Tap an Apple device to connect";
+    hidden var _note as String = "Tap the strongest entry to connect";
     // [y, index into _devs] per drawn row, and the play/pause button [y, h].
     hidden var _rows as Array<Array> = [] as Array<Array>;
     hidden var _btn as Array<Number>? = null;
@@ -31,7 +37,26 @@ class BleScanView extends WatchUi.View {
     }
 
     function onHide() as Void {
+        _connTimer.stop();
         BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF);
+        Ams.disconnect();
+    }
+
+    // From the delegate.
+    function connectedState(on as Boolean) as Void {
+        _connected = on;
+        if (on) {
+            _connTimer.stop();
+        }
+    }
+
+    function connectTimeout() as Void {
+        if (_connected) {
+            return;
+        }
+        Ams.disconnect();
+        note("no connection after 10 s, released");
+        BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
     }
 
     function scanState(state as BluetoothLowEnergy.ScanState, status as BluetoothLowEnergy.Status) as Void {
@@ -67,11 +92,19 @@ class BleScanView extends WatchUi.View {
         Ams.disconnect();
         System.println("connect #" + i + " connections free: "
             + BluetoothLowEnergy.getAvailableConnectionCount());
+        _connected = false;
         try {
             Ams.device = BluetoothLowEnergy.pairDevice(d[0] as BluetoothLowEnergy.ScanResult);
-            note(Ams.device == null ? "pair refused" : "connecting #" + i + "...");
+            if (Ams.device == null) {
+                note("pair refused");
+                BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
+            } else {
+                note("connecting #" + i + " (10 s)...");
+                _connTimer.start(method(:connectTimeout), CONNECT_MS, false);
+            }
         } catch (e) {
             note("pair failed: " + e.getErrorMessage());
+            BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
         }
     }
 
@@ -168,10 +201,10 @@ class BleScanView extends WatchUi.View {
         dc.drawText(pad, 4 + lh, f, _devs.size() + " devices, " + apple + " Apple, " + ams + " AMS", Graphics.TEXT_JUSTIFY_LEFT);
         Ui.hline(dc, 6 + 2 * lh, w);
 
-        // Apple devices only, strongest first.
+        // iPhone-like Apple entries only (Nearby, Handoff), strongest first.
         var order = [] as Array<Number>;
         for (var i = 0; i < _devs.size(); i++) {
-            if (_devs[i][3] != true) {
+            if (_devs[i][3] != true || (_devs[i][5] != 0x10 && _devs[i][5] != 0x0C)) {
                 continue;
             }
             var j = 0;
