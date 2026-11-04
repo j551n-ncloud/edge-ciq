@@ -7,7 +7,9 @@ import Toybox.WatchUi;
 // Spotify remote through the glance proxy (/music-api/now and /cmd), laid out
 // like the design canvas at 282x470:
 //   header 34 | now playing 150 | prev / play-pause / next 120 |
-//   shuffle / like / repeat 84 | footer (hint or status)
+//   like 84 | footer (hint or status)
+// No shuffle/repeat: Spotify disallows toggling them for this account
+// (actions.disallows), so the buttons could only ever fail.
 // Polls now-playing every 5 s while the widget is on screen.
 class MusicView extends WatchUi.View {
     const POLL_MS = 5000;
@@ -158,17 +160,12 @@ class MusicView extends WatchUi.View {
         button(dc, pad + 2 * (bw + GAP), by, bw, bh, false, Ui.INK, "next");
         iconSkip(dc, pad + 2 * (bw + GAP) + bw / 2, by + bh / 2, true, Ui.INK);
 
-        // Shuffle / like / repeat
+        // Like, full width
         y += hC;
         var hR = (84 * s).toNumber();
         var rh = hR - 12;
-        var shuffleOn = active && now["shuffle"] == true;
         var liked = active && now["liked"] == true;
-        var repeat = (active && now["repeat"] instanceof String) ? now["repeat"] as String : "off";
-        textButton(dc, pad, y, bw, rh, shuffleOn, Ui.INK, "shuffle", "SHUFFLE");
-        textButton(dc, pad + bw + GAP, y, bw, rh, liked, Ui.FUEL, liked ? "unlike" : "like", liked ? "LIKED" : "LIKE");
-        textButton(dc, pad + 2 * (bw + GAP), y, bw, rh, !repeat.equals("off"), Ui.INK, "repeat",
-            repeat.equals("track") ? "REPEAT 1" : "REPEAT");
+        textButton(dc, pad, y, w - 2 * pad, rh, liked, Ui.FUEL, liked ? "unlike" : "like", liked ? "LIKED" : "LIKE");
 
         // Footer: status or the double-tap hint
         y += hR;
@@ -202,7 +199,7 @@ class MusicView extends WatchUi.View {
                                on as Boolean, onColor as Number, cmd as String, text as String) as Void {
         button(dc, x, y, bw, bh, on, on ? onColor : Ui.LINE, cmd);
         dc.setColor(on ? (onColor == Ui.INK ? Ui.PAPER : Ui.INK) : Ui.INK, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(x + bw / 2, y + bh / 2, Graphics.FONT_XTINY, text,
+        dc.drawText(x + bw / 2, y + bh / 2, Graphics.FONT_SMALL, text,
             Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 

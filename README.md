@@ -6,8 +6,8 @@ the "Edge 1030 Plus Interface" canvas on claude.ai.
 | App | Type | Status |
 |---|---|---|
 | `fuelzone/` | data field, full screen | ride screen, gel alert, bell; on the Edge |
-| `briefing/` | widget "Ride Brief" | built, needs glance `/garmin-api/edge-brief` deployed |
-| `music/` | widget "Music" | built, needs glance `/music-api/*` deployed + Spotify login |
+| `briefing/` | widget "Ride Brief" | on the Edge (enable it in the widget loop) |
+| `music/` | widget "Music" | on the Edge (enable it in the widget loop) |
 | `shared/` | code | `bell/` for all apps, `widget/` (proxy calls, drawing) for the widgets |
 
 ## fuelzone
@@ -42,16 +42,18 @@ apps may not show them, then change the defaults in `resources/settings/properti
 
 ## Widgets
 
-Swipe down on the Edge to reach them. They call the glance proxy through
+Swipe down on the Edge to reach them. Sideloaded widgets start switched off:
+enable them under Menu > Settings > System > Widgets. They call the glance proxy through
 the phone (Garmin Connect app over Bluetooth, the phone's mobile data), so no
 WiFi on the bike; without the phone the brief shows the last saved copy.
 Double-tap anywhere = bell, single taps wait 300 ms to rule that out.
 
 - **Ride Brief:** readiness ring and reasons, weather and dark-from, packing
   list, gel plan, bike status (`GET /garmin-api/edge-brief`). Tap refreshes.
-- **Music:** Spotify previous / play-pause / next, shuffle / like / repeat
+- **Music:** Spotify previous / play-pause / next and like
   (`/music-api/now`, `POST /music-api/cmd`), polls every 5 s while shown. No
-  volume: the iPhone has no remote volume.
+  volume (the iPhone has no remote volume), no shuffle/repeat (Spotify
+  disallows toggling them for this account).
 
 Both send the narrow `EDGE_API_TOKEN` (only valid for those routes), baked in
 at build time: `scripts/secrets.sh` writes it from `../glance/.env` (or
