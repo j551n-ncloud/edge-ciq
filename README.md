@@ -76,13 +76,14 @@ WiFi on the bike; without the phone the brief shows the last saved copy.
   list, gel plan, bike status (`GET /garmin-api/edge-brief`). Tap refreshes.
 - **Music:** Spotify previous / play-pause / next and like, straight to the
   Spotify Web API through the phone (`music/source/Spotify.mc`), no proxy.
-  Every byte crosses Bluetooth and Spotify's answers can't be trimmed, so it
-  uses the smallest call (`/me/player/currently-playing`, ~2.7 KB), polls
-  every 10 s and moves the progress bar locally in between. No up next (the
-  queue is ~35 KB). Liked state is asked once per track. GETs carry a
-  changing parameter: the iPhone's Garmin Connect app otherwise answered
-  repeated requests from its cache (a song several skips old). No volume, no
-  shuffle/repeat. Needs Spotify Premium.
+  Polls `/me/player?market=from_token` every 5 s while shown (the market
+  parameter drops the per-track country lists) and keeps only the fields
+  it draws. Liked state and the next track (`/me/player/queue`, about
+  100 KB to parse, of the widget's 1 MB) are asked once per track. GETs carry a changing
+  parameter: the iPhone's Garmin Connect app otherwise answered repeated
+  requests from its cache (a song several skips old). No volume (the iPhone has
+  no remote volume), no shuffle/repeat (Spotify disallows toggling them for
+  this account). Needs Spotify Premium.
 
   Its own Spotify login, separate from glance's: add
   `http://127.0.0.1:8888/callback` as a redirect URI of the Spotify app
